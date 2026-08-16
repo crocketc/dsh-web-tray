@@ -98,6 +98,24 @@ class TrayApp:
         icon = self.icon
         if icon is None:
             return
+        if sys.platform == "darwin":
+            # macOS 的 pystray 直接操作 AppKit（NSStatusItem），UI 更新必须在主线程。
+            # 本方法常从后台线程（就绪/崩溃回调）触发，需派发到主线程执行，
+            # 否则图标不刷新（一直停在上一个状态）甚至主线程卡顿（转圈）。
+            try:
+                import Foundation
+
+                if not Foundation.NSThread.isMainThread():
+                    # 投递到主线程 run loop（托盘主线程正阻塞在 icon.run() 的 loop 上）
+                    Foundation.NSRunLoop.mainRunLoop().performBlock_(
+                        lambda: self._refresh_ui_now(icon)
+                    )
+                    return
+            except Exception:  # pragma: no cover - 派发不可用则降级为直调
+                pass
+        self._refresh_ui_now(icon)
+
+    def _refresh_ui_now(self, icon) -> None:
         try:
             icon.icon = trayicons.make_icon(self.state)
         except Exception:  # pragma: no cover - 图标后端异常不致命
