@@ -5,3 +5,5 @@ dist/
 *.spec
 .testtmp/
 .tmp/
+# 内部开发文档（本地保留，不进仓库）
+dsh-web-tray-开发计划.md

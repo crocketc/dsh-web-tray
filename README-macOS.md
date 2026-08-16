@@ -68,7 +68,7 @@ bash scripts/build-app.sh
 
 - **首次打开**：ad-hoc 签名未公证，需右键→打开，或 `xattr -cr "DSH Web Tray.app"`
 - **正式分发**：需 Apple Developer ID 签名 + `notarytool` 公证
-- **双架构**：arm64 与 x86_64 必须分别在对应架构构建（CI 矩阵见开发计划）
+- **双架构**：arm64 与 x86_64 必须分别在对应架构构建（本仓库 CI 已配双架构矩阵）
 
 ## 测试清单（macOS 环境）
 
