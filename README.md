@@ -1,171 +1,158 @@
 # DSH Web Tray
 
-[English-ish quick facts below; 完整说明以中文为准]
+把 DSH Web GUI 装进系统托盘：双击启动、后台运行、不占终端、状态一眼可见。
 
-DSH Web GUI（`dsh web`）的系统托盘守护器：双击启动、后台运行、不弹终端，通过系统托盘控制并显示运行状态。跨平台支持 Windows 与 macOS（Linux 可选）。
+[![Release](https://img.shields.io/badge/release-v1.5.0-blue)](https://github.com/crocketc/dsh-web-tray/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey)](https://github.com/crocketc/dsh-web-tray/releases/latest)
 
-## 功能
+## 它解决什么问题
 
-- **后台运行**：启动 `dsh web` 不显示终端窗口（Windows `CREATE_NO_WINDOW` / POSIX 独立进程组）
-- **系统托盘集成**：状态图标（启动中 / 运行中 / 运行中·外部启动 / 已停止 / 意外退出）+ 右键菜单
-- **官方就绪信号**：解析 stdout 的 `dsh web: http://...` URL 行判定就绪（不轮询端口），支持 `--port 0` 自动分配端口
-- **优雅退出**：POSIX 发 SIGTERM（dsh 官方 supervisor 契约，exit 0，自行清理整棵进程树）；Windows 用进程树终止（无法投递 SIGTERM，见下文"平台差异"）
-- **崩溃感知**：dsh web 意外退出即切换托盘状态，一键重新启动
-- **外部实例检测**：终端里已在跑 dsh web 时，托盘显示"运行中（外部启动）"，不重复启动
-- **开机自启**：Windows 注册表（HKCU Run）/ macOS LaunchAgent（`launchctl bootstrap`）
-- **配置向导**：自动检测安装方式（源码 / npm 全局 / npm 本地，含前端 dist 构建前置检查），未安装时提供安装指引
-- **防重复启动**：锁文件 + PID 存活检查（create_time 防 PID 复用）
+直接在终端里跑 `dsh web` 有几个日常烦恼：
 
-## 快速开始
+- **占一个终端窗口**——关掉窗口，服务就停了
+- **看不出它活没活着**——端口多少、地址是什么，都得翻终端输出
+- **每次开机要手动敲命令**
+
+DSH Web Tray 把它变成一个"托盘小服务"：
+
+| 你得到的 | 说明 |
+|---------|------|
+| 🖱️ 双击启动 | 无终端窗口，后台静默运行 |
+| 🎨 状态一眼可见 | 托盘图标颜色实时反映运行状态，悬停显示访问地址 |
+| 🌐 一键打开浏览器 | 双击托盘图标即可打开 Web 界面（自动带正确端口） |
+| 💥 崩溃自动感知 | dsh 意外退出时图标变红，一键重启 |
+| 🔁 防重复启动 | 检测到已在运行的实例会显示"外部启动"，不会起第二份 |
+| ⏻ 干净退出 | 从托盘退出时**只关自己启动的** dsh，不碰外部进程，不留孤儿进程 |
+| 💾 可选开机自启 | 托盘菜单上勾一下就行 |
+
+## 安装
+
+### 方式一：下载安装包（推荐）
+
+去 [Releases 页面](https://github.com/crocketc/dsh-web-tray/releases/latest) 下载对应平台的包：
+
+| 下载文件 | 适用平台 | 怎么用 |
+|---------|---------|--------|
+| `dsh-web-tray.exe` | Windows | 下载后双击即用 |
+| `dsh-web-tray-arm64-*.dmg` | Mac（M 系列芯片） | 打开 DMG，把应用拖入"应用程序" |
+| `dsh-web-tray-x86_64-*.dmg` | Mac（Intel 芯片） | 同上 |
+
+**无需安装 Python 或任何依赖。**
+
+> - Windows 首次运行 exe 可能弹 SmartScreen 蓝色警告（未购买代码签名证书的通病）：点"更多信息" → "仍要运行"
+> - Mac 首次打开需**右键点应用 → 打开**（同理，未做 Apple 公证）；它只出现在菜单栏，不占 Dock
+
+### 方式二：从源码运行
+
+需要 Python 3.9+：
 
 ```bash
-# 1. 安装依赖
-pip install -r requirements.txt        # pystray psutil pillow
+pip install -r requirements.txt
 
-# 2. 运行（Windows）
-python dsh-web-tray.py
+# Windows：双击 start-tray.cmd（后台运行，关终端无影响）
+# 或命令行：
+pythonw dsh-web-tray.py     # 后台
+python dsh-web-tray.py      # 前台（调试用，能看输出）
+```
 
-# 2. 运行（macOS，Homebrew Python 需先 brew install python-tk）
+```bash
+# macOS（Homebrew Python 需先装 tk）
+brew install python-tk
+pip3 install -r requirements.txt
 python3 dsh-web-tray.py
 ```
 
-首次运行会弹出配置向导：自动检测 dsh 安装 → 选择端口 → 保存后自动启动。托盘图标出现在系统托盘/菜单栏。
+## 首次运行
 
-## 托盘菜单
+第一次启动会弹出**配置向导**，全程只需点几下：
+
+1. 自动检测本机的 dsh 安装（npm 全局 / 源码 pnpm / npx 本地，多份共存时让你选）
+2. 选端口号（默认 3080；填 0 = 每次自动分配）
+3. 保存后自动启动，托盘出现图标
+
+没装 dsh？向导会给出安装命令（可一键复制）和官方文档链接，装好后点"重试检测"即可。
+
+## 日常使用
+
+### 托盘图标 = 状态灯
+
+| 图标 | 状态 | 含义 |
+|------|------|------|
+| 🔵 蓝色 | 启动中 | 正在拉起 dsh web（首次启动含初始化，可能要等十几秒） |
+| 🟢 绿色 | 运行中 | 服务正常，悬停图标可看访问地址 |
+| 🩵 青色（双环） | 运行中·外部启动 | 检测到你自己在外部启动的 dsh（比如终端里跑的），托盘只监控、不接管 |
+| 🔴 红色（✕） | 意外退出 / 启动失败 | 前者点"重新启动"；后者看日志排查 |
+| ⚪ 灰色 | 已停止 | 点"重新启动"可再次拉起 |
+
+### 右键菜单
 
 ```
-状态行（动态：● 运行中 (http://127.0.0.1:3080) 等）
-───────────
-打开浏览器          ← 双击托盘图标同效，用解析出的 URL
-重新启动            ← 崩溃/停止时可用
+● 运行中 (http://127.0.0.1:3080)      ← 状态行，实时更新
+──────────────────
+打开浏览器          ← 也可以直接双击托盘图标
+重新启动
 停止
-开机自启（已启用/未启用）
-重新配置
-───────────
+开机自启（未启用）
+重新配置            ← 重跑配置向导
+──────────────────
 帮助
   ├── 如何安装 DSH
   ├── 访问官方文档
   └── 打开日志目录
-退出                ← 优雅停止 dsh 进程树
+退出                ← 优雅停止 dsh 并退出托盘
 ```
 
-## 配置
+### 两个值得知道的行为
 
-配置文件：`~/.dsh-web-tray/config.json`（可用 `DSH_WEB_TRAY_HOME` 环境变量重定向，便于测试/便携部署）
-
-```json
-{
-  "dshType": "pnpm",
-  "dshArgv": ["C:/deepseek-harness/node_modules/.bin/pnpm.cmd", "dsh", "web"],
-  "dshArgvDisplay": "pnpm dsh web",
-  "dshDir": "C:\\deepseek-harness",
-  "dshPort": 3080,
-  "lastUrl": "http://127.0.0.1:3080",
-  "autostart": false
-}
-```
-
-要点：
-
-- **命令存 argv 数组**（不存字符串）：路径含空格也安全（`C:\Program Files\...`）
-- `dshArgv` 在保存时已解析为**绝对路径**——运行期（尤其 macOS GUI 环境 PATH 不全）不再依赖 PATH
-- `dshPort = 0` 表示系统自动分配，实际地址从启动日志 URL 行回读
-- 读取兼容 UTF-8 BOM（Windows 工具手改配置不炸）
-
-## 日志
-
-- `~/.dsh-web-tray/logs/dsh-web.log` — dsh web 的 stdout/stderr（排空线程持续落盘，>5MB 自动轮转）
-- `~/.dsh-web-tray/logs/tray.log` — 托盘自身诊断日志
-
-## 进程生命周期（设计依据 dsh 源码核实的 supervisor 契约）
-
-```
-启动 ──→ 就绪 ──→ 运行监控 ──→ 退出
- │         │          │           │
- PATH解析  解析stdout  崩溃检测    SIGTERM→树杀兜底
- spawn     URL行      状态菜单    (Windows: 树终止)
- 记录PID
-```
-
-| 契约 | 源码依据 |
-|------|---------|
-| stdout 的 `dsh web: http://...` 行是官方就绪信号 | `packages/bundle/web-app/src/index.ts` |
-| SIGTERM = 官方 supervisor 优雅停止（exit 0，自行清理进程树） | `apps/cli/src/profile-boot.ts` |
-| `--port 0` 支持系统自动分配端口 | `packages/bundle/web-app/src/startup.ts` |
-| 源码安装必须先构建前端 dist | `web-app/src/index.ts`（`frontend dist not built` 报错） |
-
-### 平台差异（诚实的说明）
-
-- **Windows 无法向无控制台的进程投递 SIGTERM**（CTRL 事件要求共享控制台），因此退出采用**进程树终止**（psutil 枚举整树逐个终止，进程内 API；taskkill /T /F 仅作兜底）。缓解：dsh 会话存储带 torn-tail 容错，硬杀不损坏数据。
-- **Windows 额外保护**：子进程纳入 Job Object（`KILL_ON_JOB_CLOSE`）——托盘自身被硬杀（任务管理器等）时，内核自动终止整棵 dsh 树，不留孤儿。
-- **macOS 无需任何特殊系统权限**：菜单栏图标、启动/停止子进程、LaunchAgent 均不涉及辅助功能/完全磁盘访问。
-
-## 开发
-
-```bash
-# 单元测试（50 个）
-python -m unittest discover -s tests
-
-# 真实 dsh 集成测试（--port 0，不影响运行中的实例）
-DSH_WEB_TRAY_LIVE=1 python -m unittest tests.test_integration_live -v
-
-# 生成图标资源
-python scripts/generate_icons.py
-```
-
-项目结构：
-
-```
-dsh-web-tray/
-├── dsh-web-tray.py     # 主程序（托盘 + 状态机 + 编排）
-├── dsh_process.py      # 进程生命周期核心（PATH 解析/spawn/URL 就绪/监控/退出）
-├── config.py           # 配置持久化（argv 数组）
-├── detect.py           # dsh 安装检测（源码/全局/本地 + dist 构建检查）
-├── wizard.py           # 配置向导（tkinter，子进程运行）
-├── trayicons.py        # 状态图标（PIL 动态生成）
-├── singleinstance.py   # 单实例锁（PID + create_time）
-├── platforms/          # ⚠️ 不能叫 platform/（遮蔽标准库）
-│   ├── windows.py      # 注册表自启 + explorer
-│   ├── macos.py        # LaunchAgent + open
-│   └── linux.py        # XDG autostart + xdg-open（可选）
-├── resources/          # icon.png / icon.ico（macOS icns 打包时生成）
-├── scripts/            # 依赖安装 / 打包 / 图标生成
-└── tests/              # 单元 + 集成测试
-```
-
-## 打包分发
-
-```bash
-bash scripts/build.sh          # 跨平台入口
-# Windows → dist/dsh-web-tray.exe（PyInstaller --onefile --noconsole）
-# macOS   → DSH Web Tray.app + dsh-web-tray-<arch>.dmg（含 ad-hoc 签名）
-```
-
-平台细节见 [README-Windows.md](README-Windows.md) 与 [README-macOS.md](README-macOS.md)。
-
-### CI 自动发版（GitHub Actions）
-
-推一个版本标签即触发云端双平台构建，产物自动挂到 Release 页：
-
-```bash
-git tag v1.5.0
-git push origin v1.5.0        # 触发：测试 → Windows exe + macOS arm64/x86_64 DMG → Release
-```
-
-也可在 Actions 页面手动 Run workflow 验证构建（产物在 Artifacts，不建 Release）。
-下载者无需安装 Python——exe 直接双击，DMG 拖入 Applications。
-macOS 包为 ad-hoc 签名（未公证），首次打开需右键→打开；正式分发需 Apple Developer ID 公证。
+- **退出托盘 ≠ 一定杀掉 dsh**：托盘只停掉**自己启动的**那份。如果你在终端里手动跑了一个 dsh web（青色"外部启动"状态），退出托盘不会碰它——避免误杀你正在用的会话
+- **换端口 / 换安装方式**：菜单 → 重新配置，向导里改完保存即可
 
 ## 常见问题
 
-**托盘没有图标出现？** 确认依赖完整：`python -c "import pystray, PIL, psutil"`；查看 `~/.dsh-web-tray/logs/tray.log`。
+**双击后托盘没图标？**
+Windows 检查是否被 SmartScreen 拦截（见上文）；源码用户确认依赖装了没：`python -c "import pystray, PIL, psutil"`。仍不行就看日志（见下文"文件都在哪"）。
 
-**启动失败（start_failed）？** 查看日志 `~/.dsh-web-tray/logs/dsh-web.log`。源码安装需先 `pnpm install && pnpm run build`（前端 dist 未构建时 dsh 启动即失败）；通过菜单"重新配置"重跑检测。
+**状态是红色的"启动失败"？**
+最常见原因：源码安装的 dsh 没构建前端。去 dsh 仓库根目录执行 `pnpm install && pnpm run build`，然后托盘菜单 → 重新启动。
 
-**显示"运行中（外部启动）"？** 配置端口已被其它 dsh 实例监听（如终端里手动启动的）。托盘只监控、不重复启动；"停止"对外部实例不可用。
+**一直蓝色"启动中"？**
+首次启动要做初始化，等 30-60 秒属正常。超时后会转红并提示看日志。
 
-**想换端口？** 托盘菜单 → 重新配置；或手改 `config.json` 的 `dshPort`（0 = 自动分配）。
+**显示"外部启动"但我明明没开？**
+可能是之前某次手动启动的 dsh 还在后台。想统一交给托盘管理：先停掉那个进程，再托盘菜单 → 重新启动。
+
+**数据都存在哪？**
+
+| 内容 | 位置 |
+|------|------|
+| 配置 | `~/.dsh-web-tray/config.json`（Windows 即 `C:\Users\你\.dsh-web-tray\`） |
+| dsh 运行日志 | `~/.dsh-web-tray/logs/dsh-web.log`（超 5MB 自动轮转） |
+| 托盘自身日志 | `~/.dsh-web-tray/logs/tray.log`（排障先看这个） |
+
+菜单"帮助 → 打开日志目录"可以直接跳过去。
+
+## 平台专属说明
+
+- [README-Windows.md](README-Windows.md) — 安装细节、开机自启、Windows 特有行为
+- [README-macOS.md](README-macOS.md) — 安装细节、菜单栏使用、首次打开引导
+
+## 技术细节（可选阅读）
+
+好奇内部实现或想参与开发的，这里是速览：
+
+- **就绪判定**：不轮询端口。解析 dsh 官方的 stdout 就绪信号（`dsh web: http://...` URL 行），该行打印时所有 API 路由已挂载完毕；天然支持 `--port 0` 自动分配端口
+- **优雅退出**：macOS/Linux 上向 dsh 发 SIGTERM（dsh 官方约定的 supervisor 停止信号，exit 0，dsh 自行清理整棵进程树）；Windows 无法投递 SIGTERM，改用进程树终止 + Job Object 绑定（托盘被强杀时内核自动带走整棵 dsh 树，不留孤儿）
+- **macOS GUI 环境的 PATH 陷阱**：双击启动的应用看不到 Homebrew/nvm 装的工具。对策是配置保存时即解析为绝对路径，运行期不依赖 PATH
+- **配置存 argv 数组**而非字符串：路径带空格也不会碎；读取兼容 UTF-8 BOM
+- **单实例锁**：锁文件 + PID + 进程创建时间三重校验，防误判也防重复启动
+
+测试：50 个单元测试 + 真实 dsh 集成测试（启动→就绪→HTTP 探活→停止→验证无孤儿）：
+
+```bash
+python -m unittest discover -s tests
+DSH_WEB_TRAY_LIVE=1 python -m unittest tests.test_integration_live -v   # 集成
+```
 
 ## 许可
 
-随 DSH（DeepSeek Harness）生态使用，见上游仓库：<https://github.com/deepseek-ai/harness>
+随 DSH（DeepSeek Harness）生态使用：<https://github.com/deepseek-ai/harness>

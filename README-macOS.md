@@ -1,81 +1,79 @@
-# DSH Web Tray — macOS 使用说明
+# DSH Web Tray — macOS 使用指南
 
 ## 安装
 
-1. Python 3.9+（Homebrew Python 需额外装 tk，配置向导要用）：
+### 方式一：下载 DMG（推荐）
+
+1. 打开 [Releases 页面](https://github.com/crocketc/dsh-web-tray/releases/latest)，按芯片型号下载：
+   - **M 系列**（M1/M2/M3/M4）→ `dsh-web-tray-arm64-*.dmg`
+   - **Intel** → `dsh-web-tray-x86_64-*.dmg`（不确定型号：左上角  → 关于本机）
+2. 打开 DMG，把 **DSH Web Tray** 拖入"应用程序"
+3. **首次打开：右键点应用 → 打开 → 再点"打开"**（它没做 Apple 公证——正式公证要付费开发者账号；右键打开是一次性放行，之后正常双击即可）
+
+应用只出现在**菜单栏**（右上角），不占 Dock。
+
+### 方式二：从源码跑
+
+需要 Python 3.9+。Homebrew 装的 Python 要额外装 tk（配置向导依赖）：
 
 ```bash
 brew install python-tk
 pip3 install -r requirements.txt
-# 或
-bash scripts/install-dependencies.sh
-```
-
-2. 启动：
-
-```bash
 python3 dsh-web-tray.py
 ```
 
-菜单栏出现状态图标；首次运行弹配置向导。
+## 首次运行
 
-## macOS 关键点
+弹出配置向导：自动检测 dsh 安装 → 选端口（默认 3080）→ 保存即启动，菜单栏出现图标。
 
-### PATH 解析（双击/自启场景的核心）
+## 日常使用
 
-从 Finder 或 LaunchAgent 启动的 GUI 应用，PATH 只有 `/usr/bin:/bin:/usr/sbin:/sbin`——Homebrew/nvm/volta 装的 node/pnpm 全不在路径上。本工具的对策：
+| 操作 | 怎么做 |
+|------|--------|
+| 打开 Web 界面 | 点一下菜单栏图标（默认项即"打开浏览器"，自动带正确端口） |
+| 看当前状态 | 图标颜色：🟢绿=运行中 / 🩵青=外部启动 / 🔴红=挂了 / ⚪灰=已停止 / 🔵蓝=启动中 |
+| 重启 / 停止 dsh | 点图标呼出菜单 |
+| 彻底退出 | 菜单 → 退出（先优雅停掉自己启动的 dsh，再消失） |
 
-- 配置保存时立即把命令解析为**绝对路径 argv** 存入配置，运行期不依赖 PATH
-- 解析不到时用**登录 shell**（`$SHELL -l -c 'command -v …'`）兜底拿真实 PATH
-
-### 无需任何特殊权限
-
-菜单栏图标、启动/停止子进程、LaunchAgent 自启都**不涉及**辅助功能（Accessibility）/完全磁盘访问。不要被任何引导去开这些权限。
-
-### tkinter 与 pystray 主线程冲突
-
-两者都要求主线程。配置向导因此**始终以子进程运行**（`Popen([sys.executable, wizard.py])`），结果经配置文件回传——从托盘菜单拉起向导不会挂起。
+**一个重要语义**：托盘只管理**自己启动的** dsh。终端里手动跑的那份显示为青色"外部启动"，退出托盘不会碰它。想统一交给托盘管理，先 Ctrl+C 停掉终端里那份，再菜单 → 重新启动。
 
 ## 开机自启
 
-托盘菜单勾选"开机自启"：
+菜单勾选 **开机自启** 即可（登录后自动启动，`~/Library/LaunchAgents/` 下写一个 LaunchAgent，无需任何权限确认）。取消 = 再点一次。
 
-- 写 `~/Library/LaunchAgents/com.dsh.webtray.plist`
-- 用现代 API `launchctl bootstrap gui/$(id -u)`（`load/unload` 已废弃）
-- 日志重定向到 `~/Library/Logs/com.dsh.webtray.log`
+## 无需任何特殊权限
 
-取消自启 = `bootout` + 删除 plist。
+菜单栏图标、启动/停止 dsh、开机自启——**都不涉及**辅助功能（Accessibility）、完全磁盘访问这类系统权限。如果哪天有弹窗引导你去开这些权限，那不是本应用的行为，请警惕。
 
-## 优雅退出（官方信号契约）
+## 排障速查
 
-托盘"退出"向 dsh web 发 **SIGTERM**——这是 dsh 官方约定的 supervisor 停止信号（exit 0，dsh 自行 `fiber.dispose()` 清理整棵进程树，含 agent 子进程）。超时才升级树杀兜底。
+| 症状 | 处理 |
+|------|------|
+| 应用打不开，提示"已损坏" | Gatekeeper 误判（未公证应用的通病）：终端执行 `xattr -cr /Applications/DSH\ Web\ Tray.app` 后再打开 |
+| 红色"启动失败" | 源码安装的 dsh 缺前端构建：去 dsh 仓库根目录 `pnpm install && pnpm run build`，然后菜单 → 重新启动 |
+| 一直蓝色"启动中" | 首次启动含初始化，等 30-60 秒正常 |
+| 显示"外部启动" | 端口上已有别的 dsh 实例（预期行为），见上文"重要语义" |
+| 想换端口 | 菜单 → 重新配置 |
 
-验证：
+日志位置（菜单"帮助 → 打开日志目录"直达）：
 
-```bash
-pgrep -fl dsh   # 退出托盘后应无残留
+```
+~/.dsh-web-tray/
+├── config.json          # 配置（可手改，改完重启应用生效）
+└── logs/
+    ├── dsh-web.log      # dsh 的输出（排障主战场）
+    └── tray.log         # 托盘自身诊断
 ```
 
-## 打包为 .app / DMG
+## 技术备注（可选阅读）
+
+- **优雅退出**：退出时向 dsh 发 SIGTERM——这是 dsh 官方约定的 supervisor 停止信号（exit 0，dsh 自行清理整棵进程树，包括 agent 子进程），不留孤儿。超时才升级强杀兜底
+- **PATH 陷阱的对策**：从 Finder/LaunchAgent 启动的应用看不到 Homebrew/nvm/volta 装的 node/pnpm（GUI 进程的 PATH 只有系统目录）。本工具在**保存配置时就解析成绝对路径**，运行期不依赖 PATH——所以双击启动和终端里跑一样可靠
+- **配置向导的隔离**：向导在独立子进程运行（tkinter 与菜单栏框架都要求主线程，同进程会冲突挂起），所以从菜单拉起向导永远不会卡死应用
+
+## 自己打包 .app / DMG
 
 ```bash
 bash scripts/build-app.sh
+# 产出 DSH Web Tray.app + dsh-web-tray-<架构>.dmg（含 ad-hoc 签名）
 ```
-
-流程：PyInstaller `--windowed --onefile` → **ad-hoc 签名**（必做，未签名 .app 会被 Gatekeeper 判"已损坏"）→ 生成 DMG。
-
-分发注意：
-
-- **首次打开**：ad-hoc 签名未公证，需右键→打开，或 `xattr -cr "DSH Web Tray.app"`
-- **正式分发**：需 Apple Developer ID 签名 + `notarytool` 公证
-- **双架构**：arm64 与 x86_64 必须分别在对应架构构建（本仓库 CI 已配双架构矩阵）
-
-## 测试清单（macOS 环境）
-
-- [ ] 终端 `python3 dsh-web-tray.py`（PATH 完整）
-- [ ] 双击 .app（PATH 仅系统路径 → 验证配置内绝对路径 argv）
-- [ ] LaunchAgent 自启（验证 `launchctl bootstrap`）
-- [ ] SIGTERM 优雅退出，`pgrep -fl dsh` 无残留
-- [ ] 托盘图标 Retina/深浅色主题
-- [ ] tkinter 向导从托盘菜单拉起不挂起（子进程方案）
-- [ ] Homebrew Python + python-tk 可用
