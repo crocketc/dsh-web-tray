@@ -83,4 +83,4 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dsh-web-tray-${{ matrix.arch }}-${GITHUB_REF_NAME}.dmg
+          files: dsh-web-tray-${{ matrix.arch }}-${{ github.ref_name }}.dmg
