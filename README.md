@@ -143,6 +143,19 @@ bash scripts/build.sh          # 跨平台入口
 
 平台细节见 [README-Windows.md](README-Windows.md) 与 [README-macOS.md](README-macOS.md)。
 
+### CI 自动发版（GitHub Actions）
+
+推一个版本标签即触发云端双平台构建，产物自动挂到 Release 页：
+
+```bash
+git tag v1.5.0
+git push origin v1.5.0        # 触发：测试 → Windows exe + macOS arm64/x86_64 DMG → Release
+```
+
+也可在 Actions 页面手动 Run workflow 验证构建（产物在 Artifacts，不建 Release）。
+下载者无需安装 Python——exe 直接双击，DMG 拖入 Applications。
+macOS 包为 ad-hoc 签名（未公证），首次打开需右键→打开；正式分发需 Apple Developer ID 公证。
+
 ## 常见问题
 
 **托盘没有图标出现？** 确认依赖完整：`python -c "import pystray, PIL, psutil"`；查看 `~/.dsh-web-tray/logs/tray.log`。
