@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  # 允许手动触发（Actions 页面 Run workflow，便于不开 tag 也能验证构建）
+  workflow_dispatch:
+
+jobs:
+  test:
+    # 先跑测试，测试不过不放安装包
+    name: Unit tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python -m unittest discover -s tests -v
+
+  release-windows:
+    name: Build Windows exe
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install pyinstaller pystray psutil pillow
+      - run: pwsh scripts/build-exe.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-web-tray-windows-exe
+          path: dist/dsh-web-tray.exe
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/dsh-web-tray.exe
+
+  release-macos:
+    name: Build macOS DMG (${{ matrix.arch }})
+    needs: test
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest    # arm64 (Apple Silicon)
+            arch: arm64
+          - runner: macos-13        # x86_64 (Intel)
+            arch: x86_64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      # tkinter 向导（打包进 app 的 wizard.py 依赖）；GH Actions 的 setup-python 无 tk，用框架版 brew Python
+      - run: brew install python-tk
+      - run: pip3 install pyinstaller pystray psutil pillow
+      - name: Build app + DMG
+        run: bash scripts/build-app.sh
+      - name: Rename DMG with arch and version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          mv "dsh-web-tray-$(uname -m).dmg" \
+             "dsh-web-tray-${{ matrix.arch }}-${GITHUB_REF_NAME}.dmg"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-web-tray-macos-${{ matrix.arch }}-dmg
+          path: dsh-web-tray-*.dmg
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dsh-web-tray-${{ matrix.arch }}-${GITHUB_REF_NAME}.dmg
