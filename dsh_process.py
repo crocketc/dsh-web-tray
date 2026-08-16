@@ -211,6 +211,37 @@ def _resolve_in_common_bin_dirs(cmd: str) -> Optional[str]:
     return None
 
 
+def _existing_bin_dirs() -> List[str]:
+    """展开常见安装目录（处理 ~ 与 glob），仅保留真实存在的目录。"""
+    out: List[str] = []
+    for pattern in _COMMON_BIN_DIRS:
+        expanded = os.path.expanduser(pattern)
+        candidates = glob.glob(expanded) if glob.has_magic(expanded) else [expanded]
+        for d in candidates:
+            if os.path.isdir(d) and d not in out:
+                out.append(d)
+    return out
+
+
+def build_subprocess_env(extra_env: Optional[dict] = None) -> dict:
+    """构造子进程环境变量（macOS GUI 应用 PATH 受限的核心对策）。
+
+    从 Finder/LaunchAgent 启动的应用 PATH 只有系统目录（/usr/bin:/bin:...），
+    Homebrew/nvm/volta 装的 node/pnpm 都看不到。pnpm 等 node 脚本的 shebang 是
+    ``#!/usr/bin/env node``，解释器找不到直接退出（code 127, "env: node: No such
+    file or directory"）——所以启动 dsh 时**总是**把常见工具目录补进 PATH，
+    而不是只解析 argv[0] 的绝对路径。
+    """
+    env = dict(os.environ)
+    extra = _existing_bin_dirs()
+    if extra:
+        current = env.get("PATH", "")
+        env["PATH"] = ":".join([*extra, current] if current else extra)
+    if extra_env:
+        env.update(extra_env)
+    return env
+
+
 def resolve_command(argv: Sequence[str]) -> Optional[List[str]]:
     """把 argv[0] 解析为绝对路径的完整 argv。
 
@@ -318,10 +349,9 @@ class DshProcess:
         else:
             # 独立进程组：脱离控制终端，托盘退出不受终端关闭影响
             kwargs["start_new_session"] = True
-        if self.extra_env:
-            env = dict(os.environ)
-            env.update(self.extra_env)
-            kwargs["env"] = env
+            # macOS GUI 应用 PATH 受限：总是把常见工具目录补进 PATH，
+            # 否则 node 脚本（pnpm 等）找不到解释器直接退出（code 127）。
+            kwargs["env"] = build_subprocess_env(self.extra_env)
         self.proc = subprocess.Popen(self.argv, **kwargs)
         if IS_WINDOWS:
             # 托盘自身被硬杀时，内核自动终止整棵 dsh 树（无孤儿）

@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from dsh_process import IS_WINDOWS, resolve_command
+from dsh_process import IS_WINDOWS, build_subprocess_env, resolve_command
 
 DSH_NPM_PACKAGE = "@deepseek-ai/dsh"
 DOCS_URL = "https://github.com/deepseek-ai/harness"
@@ -147,12 +147,15 @@ def verify_installation(candidate: Dict[str, Any]) -> bool:
             argv = resolve_command(candidate.get("command") or [])
             if not argv:
                 return False
+            # macOS GUI 场景 PATH 受限：node 脚本（pnpm/dsh）需要解释器，
+            # 必须用增强 PATH 验证，否则 code 127 误判为未安装。
             result = subprocess.run(
                 [argv[0], "--version"],
                 capture_output=True,
                 text=True,
                 timeout=30,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if IS_WINDOWS else 0,
+                env=build_subprocess_env(),
             )
             return result.returncode == 0
     except (subprocess.SubprocessError, OSError):
