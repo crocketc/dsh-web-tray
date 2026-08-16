@@ -36,7 +36,7 @@ DSH Web Tray 把它变成一个"托盘小服务"：
 | 下载文件 | 适用平台 | 怎么用 |
 |---------|---------|--------|
 | `dsh-web-tray.exe` | Windows | 下载后双击即用 |
-| `dsh-web-tray-arm64-*.dmg` | Mac（M 系列芯片） | 打开 DMG，把应用拖入"应用程序" |
+| `dsh-web-tray-arm64-*.dmg` | Mac（M 系列芯片） | 打开 DMG，把应用拖到里面的「应用程序」快捷方式 |
 | `dsh-web-tray-x86_64-*.dmg` | Mac（Intel 芯片） | 同上 |
 
 **无需安装 Python 或任何依赖。**
@@ -96,7 +96,7 @@ python3 dsh-web-tray.py
 打开浏览器          ← 也可以直接双击托盘图标
 重新启动
 停止
-开机自启（未启用）
+☑ 开机自启            ← 勾选框，点一下切换
 重新配置            ← 重跑配置向导
 ──────────────────
 帮助
@@ -146,7 +146,7 @@ Windows 检查是否被 SmartScreen 拦截（见上文）；源码用户确认�
 
 - **就绪判定**：不轮询端口。解析 dsh 官方的 stdout 就绪信号（`dsh web: http://...` URL 行），该行打印时所有 API 路由已挂载完毕；天然支持 `--port 0` 自动分配端口
 - **优雅退出**：macOS/Linux 上向 dsh 发 SIGTERM（dsh 官方约定的 supervisor 停止信号，exit 0，dsh 自行清理整棵进程树）；Windows 无法投递 SIGTERM，改用进程树终止 + Job Object 绑定（托盘被强杀时内核自动带走整棵 dsh 树，不留孤儿）
-- **macOS GUI 环境的 PATH 陷阱**：双击启动的应用看不到 Homebrew/nvm 装的工具。对策是配置保存时即解析为绝对路径，运行期不依赖 PATH
+- **macOS GUI 环境的 PATH 陷阱**：双击启动的应用看不到 Homebrew/nvm/volta 装的工具（GUI 进程的 PATH 只有系统目录）。对策是配置保存时即解析为绝对路径（登录 shell + 常见安装目录双路兜底），运行期不依赖 PATH
 - **配置存 argv 数组**而非字符串：路径带空格也不会碎；读取兼容 UTF-8 BOM
 - **单实例锁**：锁文件 + PID + 进程创建时间三重校验，防误判也防重复启动
 

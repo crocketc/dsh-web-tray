@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import glob
 import os
 import re
 import shlex
@@ -128,6 +129,88 @@ def _assign_to_kill_on_close_job(proc: "subprocess.Popen") -> None:
         pass  # Job Object 失败仅意味着失去"托盘被杀→树陪葬"保护，其余功能不受影响
 
 
+#: macOS 从 Finder/LaunchAgent 启动的 GUI 应用 PATH 只有系统目录，Homebrew/nvm/volta
+#: 等工具都看不到。这里扫描常见安装目录兜底（与登录 shell 兜底互补）。
+_COMMON_BIN_DIRS = [
+    "/opt/homebrew/bin",          # Apple Silicon 的 Homebrew
+    "/usr/local/bin",             # Intel 的 Homebrew / 传统安装
+    "~/.npm-global/bin",          # npm 自定义 prefix（~/.npmrc 里配的）
+    "~/.volta/bin",               # Volta（node 版本管理）
+    "~/.local/bin",               # pipx / 用户脚本
+    "~/.cargo/bin",               # Rust 工具
+    "~/.nvm/versions/node/*/bin", # nvm 安装的 node（含 npm 全局 bin）
+]
+
+
+def _resolve_via_login_shell(cmd: str) -> Optional[str]:
+    """用登录 shell 解析命令绝对路径（macOS GUI 应用 PATH 受限的兜底）。
+
+    关键坑：``zsh -l`` 是非交互登录 shell，只加载 ``.zprofile``/``.zshenv``，
+    **不加载 ``.zshrc``**——而 macOS 用户恰恰大多把 PATH（nvm/volta/Homebrew
+    提示、npm 全局 prefix）配在 ``.zshrc`` 里。所以除登录 shell 外还要
+    显式 source 常见 rc 文件再 ``command -v``。
+    """
+    shells = []
+    user_shell = os.environ.get("SHELL", "").strip()
+    if user_shell:
+        shells.append(user_shell)
+    for fallback in ("/bin/zsh", "/bin/bash"):
+        if fallback not in shells:
+            shells.append(fallback)
+    for shell in shells:
+        try:
+            base = os.path.basename(shell)
+            if base == "fish":
+                # fish 的 PATH 配在 config.fish，登录 shell 已加载；语法不同，单独处理
+                variants = [f"command -v {shlex.quote(cmd)}"]
+            elif base == "zsh":
+                variants = [
+                    # 登录 shell（.zprofile/.zshenv）+ 显式补 .zshrc
+                    f"source ~/.zshrc 2>/dev/null; command -v {shlex.quote(cmd)}",
+                    f"command -v {shlex.quote(cmd)}",
+                ]
+            elif base == "bash":
+                variants = [
+                    f"source ~/.bash_profile 2>/dev/null; source ~/.bashrc 2>/dev/null; "
+                    f"command -v {shlex.quote(cmd)}",
+                    f"command -v {shlex.quote(cmd)}",
+                ]
+            else:  # sh 等通用 POSIX
+                variants = [
+                    f". ~/.profile 2>/dev/null; command -v {shlex.quote(cmd)}",
+                    f"command -v {shlex.quote(cmd)}",
+                ]
+            for script in variants:
+                try:
+                    result = subprocess.run(
+                        [shell, "-l", "-c", script],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                except (subprocess.SubprocessError, OSError):
+                    continue
+                if result.returncode == 0 and result.stdout.strip():
+                    return result.stdout.strip().strip("\n")
+        except Exception:  # pragma: no cover - 兜底链路异常不影响主流程
+            continue
+    return None
+
+
+def _resolve_in_common_bin_dirs(cmd: str) -> Optional[str]:
+    """在常见安装目录里找命令（不依赖任何 shell 配置，最稳的兜底）。"""
+    for pattern in _COMMON_BIN_DIRS:
+        expanded = os.path.expanduser(pattern)
+        candidates = glob.glob(expanded) if glob.has_magic(expanded) else [expanded]
+        for d in candidates:
+            if not os.path.isdir(d):
+                continue
+            cand = Path(d) / cmd
+            if cand.is_file() and os.access(cand, os.X_OK):
+                return str(cand)
+    return None
+
+
 def resolve_command(argv: Sequence[str]) -> Optional[List[str]]:
     """把 argv[0] 解析为绝对路径的完整 argv。
 
@@ -136,7 +219,7 @@ def resolve_command(argv: Sequence[str]) -> Optional[List[str]]:
     - Windows：``pnpm`` 实为 ``pnpm.cmd`` shim，CreateProcess 不解析 .cmd，
       必须 ``shutil.which()`` 拿全路径（dsh 源码 plugin.ts 有同样的坑与兜底）。
     - macOS：从 Finder / LaunchAgent 启动的 GUI 应用 PATH 只有系统路径，
-      用登录 shell 拿真实 PATH 兜底。
+      用登录 shell + 常见 bin 目录双路兜底（见 _resolve_via_login_shell）。
     """
     if not argv:
         return None
@@ -153,18 +236,9 @@ def resolve_command(argv: Sequence[str]) -> Optional[List[str]]:
                 if cand.exists():
                     return [str(cand), *argv[1:]]
     if not IS_WINDOWS:
-        shell = os.environ.get("SHELL", "/bin/zsh")
-        try:
-            result = subprocess.run(
-                [shell, "-l", "-c", f"command -v {shlex.quote(argv[0])}"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return [result.stdout.strip().strip("\n"), *argv[1:]]
-        except (subprocess.SubprocessError, OSError):
-            pass
+        found = _resolve_via_login_shell(argv[0]) or _resolve_in_common_bin_dirs(argv[0])
+        if found:
+            return [found, *argv[1:]]
     return None
 
 
