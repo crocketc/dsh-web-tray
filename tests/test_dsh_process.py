@@ -1,4 +1,5 @@
 """dsh_process 核心生命周期测试（用 Python 子进程模拟 dsh web）。"""
+import os
 import socket
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from tests import new_test_dir
 from dsh_process import (
     READY_RE,
     DshProcess,
+    build_subprocess_env,
     parse_command_line,
     port_in_use,
     resolve_command,
@@ -71,6 +73,30 @@ class TestResolveCommand(unittest.TestCase):
             self.assertEqual(found, str(fake))
         finally:
             dsh_process._COMMON_BIN_DIRS = original
+
+    @unittest.skipIf(sys.platform == "win32", "POSIX 兜底仅 macOS/Linux")
+    def test_build_subprocess_env_injects_bin_dirs(self):
+        """受限 PATH 下，build_subprocess_env 必须把常见工具目录补进 PATH
+        （node 脚本解释器依赖；否则 code 127 'env: node: No such file'）。"""
+        tmp = new_test_dir()
+        bindir = tmp / "bin"
+        bindir.mkdir()
+        import dsh_process
+
+        original = dsh_process._COMMON_BIN_DIRS
+        old_path = os.environ.get("PATH", "")
+        try:
+            dsh_process._COMMON_BIN_DIRS = [str(bindir)]
+            os.environ["PATH"] = "/usr/bin:/bin"
+            env = build_subprocess_env()
+            self.assertIn(str(bindir), env["PATH"].split(":"))
+            self.assertIn("/usr/bin", env["PATH"].split(":"))  # 原 PATH 保留
+            # extra_env 仍能覆盖
+            env2 = build_subprocess_env({"FOO": "bar"})
+            self.assertEqual(env2["FOO"], "bar")
+        finally:
+            dsh_process._COMMON_BIN_DIRS = original
+            os.environ["PATH"] = old_path
 
 
 class TestParseCommandLine(unittest.TestCase):
