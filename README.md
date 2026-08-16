@@ -2,6 +2,8 @@
 
 把 DSH Web GUI 装进系统托盘：双击启动、后台运行、不占终端、状态一眼可见。
 
+![托盘右键菜单](docs/images/tray-menu.png)
+
 [![Release](https://img.shields.io/badge/release-v1.5.0-blue)](https://github.com/crocketc/dsh-web-tray/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey)](https://github.com/crocketc/dsh-web-tray/releases/latest)
 
@@ -85,6 +87,8 @@ python3 dsh-web-tray.py
 | ⚪ 灰色 | 已停止 | 点"重新启动"可再次拉起 |
 
 ### 右键菜单
+
+![托盘右键菜单](docs/images/tray-menu.png)
 
 ```
 ● 运行中 (http://127.0.0.1:3080)      ← 状态行，实时更新
