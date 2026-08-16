@@ -1,0 +1,13 @@
+# 跨平台换行策略：shell 脚本必须 LF（CRLF 会破坏 bash），Windows 批处理必须 CRLF
+* text=auto
+*.sh text eol=lf
+*.py text
+*.md text
+*.json text
+*.txt text
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.png binary
+*.ico binary
+*.icns binary
