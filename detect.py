@@ -32,6 +32,11 @@ INSTALL_COMMANDS = {
 COMMON_SOURCE_DIRS = [
     Path.home() / "deepseek-harness",
     Path.home() / "harness",
+    Path.home() / "dsh",
+    Path.home() / "code" / "deepseek-harness",
+    Path.home() / "dev" / "deepseek-harness",
+    Path.home() / "Developer" / "deepseek-harness",
+    Path.home() / "Documents" / "deepseek-harness",
     Path("C:/deepseek-harness"),
 ]
 

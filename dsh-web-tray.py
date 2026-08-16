@@ -365,7 +365,11 @@ class TrayApp:
             return self.state in ("running", "starting")
 
         def autostart_text(item=None) -> str:
-            return f"开机自启（{'已启用' if self.autostart_on else '未启用'}）"
+            # macOS 上以勾选框呈现（MenuItem checked 参数），文字不带状态
+            return "开机自启"
+
+        def autostart_checked(item=None) -> bool:
+            return self.autostart_on
 
         return pystray.Menu(
             pystray.MenuItem(lambda item: self._status_text(), None, enabled=False),
@@ -373,7 +377,7 @@ class TrayApp:
             pystray.MenuItem("打开浏览器", self.on_open_browser, enabled=can_open, default=True),
             pystray.MenuItem("重新启动", self.on_restart, enabled=can_restart),
             pystray.MenuItem("停止", self.on_stop, enabled=can_stop),
-            pystray.MenuItem(autostart_text, self.on_toggle_autostart),
+            pystray.MenuItem(autostart_text, self.on_toggle_autostart, checked=autostart_checked),
             pystray.MenuItem("重新配置", self.on_reconfigure),
             sep,
             pystray.MenuItem(

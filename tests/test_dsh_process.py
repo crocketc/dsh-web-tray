@@ -14,12 +14,23 @@ from dsh_process import (
     parse_command_line,
     port_in_use,
     resolve_command,
+    _resolve_in_common_bin_dirs,
+    _resolve_via_login_shell,
 )
 
 
 class TestResolveCommand(unittest.TestCase):
+    def _known_command(self) -> str:
+        # macOS 没有 python 命令（只有 python3）；Windows 上二者皆可。
+        # 用 shutil.which 找一个确定存在的解释器命令名，保证跨平台稳定。
+        for name in (sys.executable, "python3", "python"):
+            resolved = resolve_command([name])
+            if resolved:
+                return name
+        self.fail("no known command found to test with")
+
     def test_known_command_resolves_to_absolute(self):
-        argv = resolve_command(["python"])
+        argv = resolve_command([self._known_command()])
         self.assertIsNotNone(argv)
         self.assertTrue(Path(argv[0]).is_absolute())
         self.assertTrue(Path(argv[0]).exists())
@@ -28,9 +39,38 @@ class TestResolveCommand(unittest.TestCase):
         self.assertIsNone(resolve_command(["definitely-not-a-real-cmd-xyz"]))
 
     def test_extra_args_preserved(self):
-        argv = resolve_command(["python", "-c", "pass"])
+        argv = resolve_command([self._known_command(), "-c", "pass"])
         self.assertIsNotNone(argv)
         self.assertEqual(argv[1:], ["-c", "pass"])
+
+    @unittest.skipIf(sys.platform == "win32", "POSIX 兜底仅 macOS/Linux")
+    def test_login_shell_fallback_resolves_system_bin(self):
+        """受限 PATH（GUI 应用）下，登录 shell 兜底能解析系统命令。"""
+        argv = resolve_command(["ls"])
+        self.assertIsNotNone(argv)
+        self.assertTrue(Path(argv[0]).is_absolute())
+        self.assertTrue(Path(argv[0]).exists())
+
+    @unittest.skipIf(sys.platform == "win32", "POSIX 兜底仅 macOS/Linux")
+    def test_common_bin_dirs_fallback(self):
+        """常见安装目录扫描兜底：在 ~/.local/bin 放一个假命令应能解析。"""
+        tmp = new_test_dir()
+        bindir = tmp / "bin"
+        bindir.mkdir()
+        fake = bindir / "dsh-fake-bin"
+        fake.write_text("#!/bin/sh\necho fake\n", encoding="utf-8")
+        fake.chmod(0o755)
+        self.assertEqual(_resolve_in_common_bin_dirs("definitely-missing"), None)
+        # 把扫描目录临时指到测试目录，验证查找逻辑
+        import dsh_process
+
+        original = dsh_process._COMMON_BIN_DIRS
+        try:
+            dsh_process._COMMON_BIN_DIRS = [str(bindir)]
+            found = _resolve_in_common_bin_dirs("dsh-fake-bin")
+            self.assertEqual(found, str(fake))
+        finally:
+            dsh_process._COMMON_BIN_DIRS = original
 
 
 class TestParseCommandLine(unittest.TestCase):
