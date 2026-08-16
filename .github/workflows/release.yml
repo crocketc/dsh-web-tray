@@ -27,6 +27,8 @@ jobs:
     name: Build Windows exe
     needs: test
     runs-on: windows-latest
+    permissions:
+      contents: write        # softprops/action-gh-release 创建 Release 需要
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -48,6 +50,8 @@ jobs:
     name: Build macOS DMG (${{ matrix.arch }})
     needs: test
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write        # softprops/action-gh-release 创建 Release 需要
     strategy:
       fail-fast: false
       matrix:
