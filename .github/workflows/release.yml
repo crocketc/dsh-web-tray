@@ -52,9 +52,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-latest    # arm64 (Apple Silicon)
+          - runner: macos-latest      # arm64 (Apple Silicon)
             arch: arm64
-          - runner: macos-13        # x86_64 (Intel)
+          - runner: macos-15-intel    # x86_64 (Intel)；macos-13 已退役，勿用
             arch: x86_64
     steps:
       - uses: actions/checkout@v4
