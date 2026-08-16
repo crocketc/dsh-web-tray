@@ -3,8 +3,21 @@ name: Release
 on:
   push:
     tags: ['v*']
-  # 允许手动触发（Actions 页面 Run workflow，便于不开 tag 也能验证构建）
+  # 手动触发：可只构建单个平台、指定版本号（用于重发已存在的 release）
   workflow_dispatch:
+    inputs:
+      platforms:
+        description: '构建哪些平台'
+        type: choice
+        options:
+          - all
+          - macos-only
+          - windows-only
+        default: all
+      version:
+        description: '目标版本号（如 v1.5.0）。推 tag 时自动取 tag 名；手动触发想更新已存在的 release 时填写'
+        required: false
+        default: ''
 
 jobs:
   test:
@@ -26,9 +39,12 @@ jobs:
   release-windows:
     name: Build Windows exe
     needs: test
+    if: github.event_name == 'push' || inputs.platforms != 'macos-only'
     runs-on: windows-latest
     permissions:
       contents: write        # softprops/action-gh-release 创建 Release 需要
+    env:
+      TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -40,18 +56,28 @@ jobs:
         with:
           name: dsh-web-tray-windows-exe
           path: dist/dsh-web-tray.exe
+      - name: Remove stale exe asset (re-release)
+        if: github.event_name == 'workflow_dispatch' && inputs.version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete-asset "${{ inputs.version }}" "dsh-web-tray.exe" --yes 2>/dev/null || true
       - name: Upload to release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG }}
           files: dist/dsh-web-tray.exe
 
   release-macos:
     name: Build macOS DMG (${{ matrix.arch }})
     needs: test
+    if: github.event_name == 'push' || inputs.platforms != 'windows-only'
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: write        # softprops/action-gh-release 创建 Release 需要
+    env:
+      TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
     strategy:
       fail-fast: false
       matrix:
@@ -71,16 +97,23 @@ jobs:
       - name: Build app + DMG
         run: bash scripts/build-app.sh
       - name: Rename DMG with arch and version
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
         run: |
           mv "dsh-web-tray-$(uname -m).dmg" \
-             "dsh-web-tray-${{ matrix.arch }}-${GITHUB_REF_NAME}.dmg"
+             "dsh-web-tray-${{ matrix.arch }}-${TAG}.dmg"
       - uses: actions/upload-artifact@v4
         with:
           name: dsh-web-tray-macos-${{ matrix.arch }}-dmg
           path: dsh-web-tray-*.dmg
+      - name: Remove stale DMG asset (re-release)
+        if: github.event_name == 'workflow_dispatch' && inputs.version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete-asset "${{ inputs.version }}" "dsh-web-tray-${{ matrix.arch }}-${{ inputs.version }}.dmg" --yes 2>/dev/null || true
       - name: Upload to release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.version != ''
         uses: softprops/action-gh-release@v2
         with:
-          files: dsh-web-tray-${{ matrix.arch }}-${{ github.ref_name }}.dmg
+          tag_name: ${{ env.TAG }}
+          files: dsh-web-tray-${{ matrix.arch }}-${{ env.TAG }}.dmg
