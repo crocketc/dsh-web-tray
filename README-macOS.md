@@ -53,7 +53,7 @@ python3 dsh-web-tray.py
 | 应用打不开，提示"已损坏" | Gatekeeper 误判（未公证应用的通病）：终端执行 `xattr -cr /Applications/DSH\ Web\ Tray.app` 后再打开 |
 | 向导"未检测到任何 dsh 安装" | 大概率是 PATH 问题：从 Finder 启动的应用看不到 Homebrew/nvm 等装的工具。先在终端跑 `command -v dsh` 确认已安装；确认在 PATH 上后，点"重试检测"。若 `command -v dsh` 本身无输出，说明 dsh 没装或不在 shell 配置的 PATH 里，走向导里的安装指引 |
 | 红色"启动失败" | 源码安装的 dsh 缺前端构建：去 dsh 仓库根目录 `pnpm install && pnpm run build`，然后菜单 → 重新启动 |
-| 一直蓝色"启动中" | 首次启动含初始化，等 30-60 秒正常 |
+| 一直蓝色"启动中" | 首次启动含初始化，等 30-60 秒正常；**超过 2 分钟仍蓝色**：看 `~/.dsh-web-tray/logs/tray.log`——若日志已显示"就绪"但图标没变绿，是旧版本的图标刷新 bug，请升级到最新版 |
 | 显示"外部启动" | 端口上已有别的 dsh 实例（预期行为），见上文"重要语义" |
 | 想换端口 | 菜单 → 重新配置 |
 
