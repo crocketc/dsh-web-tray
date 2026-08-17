@@ -68,6 +68,8 @@ python3 dsh-web-tray.py
 
 第一次启动会弹出**配置向导**，全程只需点几下：
 
+![首次运行配置向导](docs/images/wizard-first-run.png)
+
 1. 自动检测本机的 dsh 安装（npm 全局 / 源码 pnpm / npx 本地，多份共存时让你选）
 2. 选端口号（默认 3080；填 0 = 每次自动分配）
 3. 保存后自动启动，托盘出现图标
