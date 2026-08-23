@@ -1,5 +1,6 @@
 """updater 模块测试：版本比较、registry 解析、版本查询、当前版本获取。"""
 import unittest
+import subprocess
 from unittest import mock
 
 from tests import new_test_dir
@@ -516,3 +517,154 @@ class TestPnpmUpdateDetection(unittest.TestCase):
             result = updater.check_for_update(cfg)
             self.assertIsNone(result["has_update"])
             self.assertEqual(result["reason"], "未知，跳过判定")
+
+class TestGitDetectionIntegration(unittest.TestCase):
+    """git 远端检测集成测试（真实 git 仓库，file:// 协议）。"""
+
+    def setUp(self):
+        """创建临时 bare 仓库和 clone 仓库"""
+        self.test_dir = new_test_dir()
+        
+        # 1. 创建 bare 仓库（远端）
+        self.bare_repo = self.test_dir / "remote.git"
+        subprocess.run(
+            ["git", "init", "--bare", str(self.bare_repo)],
+            capture_output=True,
+            check=True
+        )
+        
+        # 2. clone 仓库（本地工作区）
+        self.work_repo = self.test_dir / "work"
+        subprocess.run(
+            ["git", "clone", str(self.bare_repo), str(self.work_repo)],
+            capture_output=True,
+            check=True
+        )
+        
+        # 3. 在本地仓库创建初始提交
+        readme = self.work_repo / "README.md"
+        readme.write_text("# Test Repository\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=str(self.work_repo),
+            capture_output=True,
+            check=True
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=str(self.work_repo),
+            capture_output=True,
+            check=True
+        )
+        subprocess.run(
+            ["git", "add", "README.md"],
+            cwd=str(self.work_repo),
+            capture_output=True,
+            check=True
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Initial commit"],
+            cwd=str(self.work_repo),
+            capture_output=True,
+            check=True
+        )
+        
+        # 确定默认分支名称（main 或 master）
+        branch_result = subprocess.run(
+            ["git", "symbolic-ref", "--short", "HEAD"],
+            cwd=str(self.work_repo),
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        self.default_branch = branch_result.stdout.strip()
+        
+        subprocess.run(
+            ["git", "push", "origin", self.default_branch],
+            cwd=str(self.work_repo),
+            capture_output=True,
+            check=True
+        )
+
+    def test_integration_no_updates(self):
+        """集成测试：无更新（本地和远端相同）"""
+        result = updater._fetch_git_remote(str(self.work_repo), f"origin/{self.default_branch}")
+        self.assertEqual(result["status"], "current")
+        self.assertEqual(result["behind_count"], 0)
+
+    def test_integration_with_updates(self):
+        """集成测试：远端有新提交"""
+        # 在 bare 仓库直接添加 3 个新提交
+        for i in range(1, 4):
+            # 临时 clone，提交，push
+            temp_clone = self.test_dir / f"temp{i}"
+            subprocess.run(
+                ["git", "clone", str(self.bare_repo), str(temp_clone)],
+                capture_output=True,
+                check=True
+            )
+            
+            # 添加新文件
+            new_file = temp_clone / f"file{i}.txt"
+            new_file.write_text(f"Content {i}\n", encoding="utf-8")
+            
+            subprocess.run(
+                ["git", "config", "user.email", "test@example.com"],
+                cwd=str(temp_clone),
+                capture_output=True,
+                check=True
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "Test User"],
+                cwd=str(temp_clone),
+                capture_output=True,
+                check=True
+            )
+            subprocess.run(
+                ["git", "add", f"file{i}.txt"],
+                cwd=str(temp_clone),
+                capture_output=True,
+                check=True
+            )
+            subprocess.run(
+                ["git", "commit", "-m", f"Commit {i}"],
+                cwd=str(temp_clone),
+                capture_output=True,
+                check=True
+            )
+            subprocess.run(
+                ["git", "push", "origin", self.default_branch],
+                cwd=str(temp_clone),
+                capture_output=True,
+                check=True
+            )
+        
+        # 现在工作区应该落后 3 个提交
+        result = updater._fetch_git_remote(str(self.work_repo), f"origin/{self.default_branch}")
+        self.assertEqual(result["status"], "behind")
+        self.assertEqual(result["behind_count"], 3)
+
+    def test_integration_non_git_directory(self):
+        """集成测试：非 git 目录"""
+        non_git_dir = self.test_dir / "not_git"
+        non_git_dir.mkdir()
+        
+        result = updater._fetch_git_remote(str(non_git_dir), "origin/main")
+        # 非 git 目录应该返回 unknown（超时或失败）或在某些配置下返回 current
+        # 重点是不会误报为 "behind"（不会提示有更新）
+        self.assertNotEqual(result["status"], "behind", 
+                           "Non-git directory should never report as behind")
+
+    def test_integration_no_remote(self):
+        """集成测试：无远端的仓库"""
+        no_remote_repo = self.test_dir / "no_remote"
+        subprocess.run(
+            ["git", "init", str(no_remote_repo)],
+            capture_output=True,
+            check=True
+        )
+        
+        result = updater._fetch_git_remote(str(no_remote_repo), "origin/main")
+        self.assertEqual(result["status"], "unknown")
+        # 无 origin 远端时，git fetch 会报错
+        self.assertIn("no remote configured", result["reason"].lower())

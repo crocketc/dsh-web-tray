@@ -256,8 +256,15 @@ def _fetch_git_remote(repo_path: str, remote_ref: str = "origin/main") -> Dict[s
 
     # 1. git fetch（超时 5 秒）
     try:
-        fetch_cmd = ["git", "-C", repo_path, "fetch", "--quiet", remote_ref]
-        subprocess.run(fetch_cmd, capture_output=True, timeout=5, check=True)
+        # remote_ref 格式为 "origin/main"，需要拆分为 remote 和 branch
+        parts = remote_ref.split("/", 1)
+        if len(parts) == 2:
+            remote, branch = parts
+            fetch_cmd = ["git", "-C", repo_path, "fetch", "--quiet", remote, branch]
+        else:
+            # 如果没有斜杠，直接使用
+            fetch_cmd = ["git", "-C", repo_path, "fetch", "--quiet", remote_ref]
+        result_run = subprocess.run(fetch_cmd, capture_output=True, timeout=5, check=True)
     except subprocess.TimeoutExpired:
         result["reason"] = "git fetch timeout"
         return result
@@ -271,6 +278,7 @@ def _fetch_git_remote(repo_path: str, remote_ref: str = "origin/main") -> Dict[s
             else:
                 stderr = str(e.stderr).lower()
         
+                
         if "not a git repository" in stderr:
             result["reason"] = "not a git repository"
         elif "does not appear to be a git repository" in stderr:
