@@ -306,3 +306,78 @@ def check_for_update(cfg: Dict[str, Any]) -> Dict[str, Any]:
             "has_update": False,
             "reason": "已是最新版本",
         }
+
+
+def build_upgrade_command(cfg: Dict[str, Any], target_version: str) -> Dict[str, Any]:
+    """按安装类型构造升级命令与手动命令文案。
+
+    Args:
+        cfg: 配置字典（含 dshType, dshDir 等）
+        target_version: 目标版本号（如 "1.2.3" 或 "1.2.3-rc.1"）
+
+    Returns:
+        {
+            "argv": Optional[List[str]],  # 命令 argv 数组（manual 为 None）
+            "cwd": Optional[str],         # 工作目录（global 无需）
+            "manual_text": str,           # 手动命令文案（失败通知用）
+        }
+
+    四种类型：
+    - global: npm install -g @deepseek-ai/dsh@<version>
+    - local: cwd=dshDir 下 npm install @deepseek-ai/dsh@<version>
+    - pnpm: cwd=dshDir 下 git pull && pnpm install && pnpm run build
+    - manual: 无命令，仅打开发布页 URL
+    """
+    dsh_type = cfg.get("dshType", "")
+    dsh_dir = cfg.get("dshDir", "")
+    package_at_version = f"{DSH_NPM_PACKAGE}@{target_version}"
+    result: Dict[str, Any] = {
+        "argv": None,
+        "cwd": None,
+        "manual_text": "",
+    }
+
+    if dsh_type == "global":
+        # 全局安装：npm install -g 包@版本
+        result["argv"] = ["npm", "install", "-g", package_at_version]
+        result["manual_text"] = f"npm install -g {package_at_version}"
+
+    elif dsh_type == "local":
+        # 本地安装：在 dshDir 下执行
+        result["argv"] = ["npm", "install", package_at_version]
+        if dsh_dir:
+            result["cwd"] = dsh_dir
+            result["manual_text"] = f"cd {dsh_dir} && npm install {package_at_version}"
+        else:
+            # dshDir 为空时在当前目录执行
+            result["manual_text"] = f"npm install {package_at_version}"
+
+    elif dsh_type == "pnpm":
+        # 源码安装：git pull + pnpm install + pnpm run build
+        if sys.platform == "win32":
+            # Windows 用 cmd /c 和 & 串联
+            cmd = "git pull & pnpm install & pnpm run build"
+            result["argv"] = ["cmd", "/c", cmd]
+        else:
+            # POSIX 用 sh -c 和 && 串联（前序失败则停止）
+            cmd = "git pull && pnpm install && pnpm run build"
+            result["argv"] = ["/bin/sh", "-c", cmd]
+        if dsh_dir:
+            result["cwd"] = dsh_dir
+            result["manual_text"] = f"cd {dsh_dir} && {cmd}"
+        else:
+            result["manual_text"] = cmd
+
+    elif dsh_type == "manual":
+        # 手动安装：无命令，仅打开发布页
+        result["manual_text"] = (
+            "请手动升级：访问 https://github.com/deepseek-ai/dsh/releases "
+            f"下载 {target_version} 版本"
+        )
+        # argv 保持 None（不执行命令）
+
+    else:
+        # 未知类型
+        result["manual_text"] = f"未知安装类型: {dsh_type}"
+
+    return result
