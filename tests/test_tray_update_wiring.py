@@ -315,3 +315,66 @@ class TestMenuItemConstruction(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTrayWiringIntegration(unittest.TestCase):
+    """集成测试：验证 TrayApp 与 update_manager 的协作。"""
+    
+    @mock.patch.dict('sys.modules', {'pystray': mock.MagicMock()})
+    def test_manual_check_for_update(self):
+        """测试手动检查更新功能。"""
+        cfg = cfgmod.default_config()
+        cfg["dshType"] = "global"
+        cfg["dshArgv"] = ["/usr/bin/dsh"]
+        
+        notifications = []
+        
+        def mock_notify(title, message):
+            notifications.append((title, message))
+        
+        # Mock updater.check_for_update to return no update
+        with mock.patch('updater.check_for_update') as mock_check:
+            mock_check.return_value = {
+                "has_update": False,
+                "current_version": "1.2.3",
+                "latest_version": None,
+                "reason": "已是最新",
+            }
+            
+            mgr = update_manager.UpdateManager(cfg, mock_check, mock_notify)
+            result = mgr.check_now(auto=False)
+            
+            self.assertFalse(result["has_update"])
+            self.assertEqual(len(notifications), 1)
+            self.assertIn("最新版本", notifications[0][1])
+    
+    @mock.patch.dict('sys.modules', {'pystray': mock.MagicMock()})
+    def test_auto_check_with_update(self):
+        """测试自动检查发现有更新。"""
+        cfg = cfgmod.default_config()
+        cfg["dshType"] = "global"
+        cfg["dshArgv"] = ["/usr/bin/dsh"]
+        cfg["lastUpdateCheckAt"] = 0
+        
+        notifications = []
+        
+        def mock_notify(title, message):
+            notifications.append((title, message))
+        
+        # Mock updater.check_for_update to return has update
+        with mock.patch('updater.check_for_update') as mock_check:
+            mock_check.return_value = {
+                "has_update": True,
+                "current_version": "1.2.3",
+                "latest_version": "1.2.4",
+                "reason": "",
+            }
+            
+            mgr = update_manager.UpdateManager(cfg, mock_check, mock_notify)
+            result = mgr.check_now(auto=True)
+            
+            self.assertTrue(result["has_update"])
+            self.assertEqual(len(notifications), 1)
+            self.assertIn("1.2.4", notifications[0][1])
+            self.assertEqual(cfg["lastNotifiedVersion"], "1.2.4")
+            self.assertEqual(cfg["lastKnownLatestVersion"], "1.2.4")
