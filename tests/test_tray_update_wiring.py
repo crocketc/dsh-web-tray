@@ -1,4 +1,5 @@
 """Tray update detection wiring tests (ticket 04)."""
+import sys
 import time
 import unittest
 from unittest import mock
@@ -209,6 +210,107 @@ class TestUpdateManager(unittest.TestCase):
         self.assertTrue(mgr.is_upgrade_in_progress())
         mgr.set_upgrade_in_progress(False)
         self.assertFalse(mgr.is_upgrade_in_progress())
+
+
+class TestMenuItemConstruction(unittest.TestCase):
+    """测试升级菜单项构造。"""
+    
+    def setUp(self):
+        """每个测试前设置 pystray mock。"""
+        self.pystray_patcher = mock.patch.dict('sys.modules', {'pystray': mock.MagicMock()})
+        self.pystray_patcher.start()
+        
+        # Create mock MenuItem class that records calls
+        self.mock_menu_item_class = mock.MagicMock()
+        sys.modules['pystray'].MenuItem = self.mock_menu_item_class
+    
+    def tearDown(self):
+        """清理 mock。"""
+        self.pystray_patcher.stop()
+
+    def test_no_update_item(self):
+        """无更新时不显示升级项。"""
+        result = {
+            "has_update": False,
+            "current_version": "1.2.3",
+            "latest_version": None,
+            "reason": "已是最新",
+        }
+        cfg = {"dshType": "global"}
+        item = update_manager.build_upgrade_menu_item(result, cfg, mock.Mock())
+        self.assertIsNone(item, "无更新时不显示升级项")
+
+    def test_has_update_npm_item(self):
+        """npm类型有更新时显示升级项。"""
+        result = {
+            "has_update": True,
+            "current_version": "1.2.3",
+            "latest_version": "1.2.4",
+            "reason": "",
+        }
+        cfg = {"dshType": "global"}
+        mock_callback = mock.Mock()
+        item = update_manager.build_upgrade_menu_item(result, cfg, mock_callback)
+        self.assertIsNotNone(item)
+        # Verify MenuItem was called with correct text
+        self.mock_menu_item_class.assert_called_once()
+        call_args = self.mock_menu_item_class.call_args
+        self.assertIn("1.2.4", call_args[0][0])
+        self.assertIn("🆕", call_args[0][0])
+
+    def test_has_update_manual_item(self):
+        """manual类型有更新时显示升级项。"""
+        result = {
+            "has_update": True,
+            "current_version": None,
+            "latest_version": None,
+            "reason": "有更新（落后 5 提交）",
+        }
+        cfg = {"dshType": "manual"}
+        mock_callback = mock.Mock()
+        item = update_manager.build_upgrade_menu_item(result, cfg, mock_callback)
+        self.assertIsNotNone(item)
+        self.mock_menu_item_class.assert_called_once()
+        call_args = self.mock_menu_item_class.call_args
+        self.assertIn("🆕", call_args[0][0])
+
+    def test_has_update_pnpm_item(self):
+        """pnpm类型有更新时显示升级项。"""
+        result = {
+            "has_update": True,
+            "current_version": None,
+            "latest_version": None,
+            "reason": "有更新（落后 3 提交）",
+        }
+        cfg = {"dshType": "pnpm"}
+        mock_callback = mock.Mock()
+        item = update_manager.build_upgrade_menu_item(result, cfg, mock_callback)
+        self.assertIsNotNone(item)
+        self.mock_menu_item_class.assert_called_once()
+        call_args = self.mock_menu_item_class.call_args
+        self.assertIn("🆕", call_args[0][0])
+        self.assertIn("3", call_args[0][0])
+
+    def test_upgrade_item_disabled_during_upgrade(self):
+        """升级过程中禁用升级项。"""
+        result = {
+            "has_update": True,
+            "current_version": "1.2.3",
+            "latest_version": "1.2.4",
+            "reason": "",
+        }
+        cfg = {"dshType": "global"}
+        mock_callback = mock.Mock()
+        item = update_manager.build_upgrade_menu_item(
+            result, cfg, mock_callback, upgrade_in_progress=True
+        )
+        self.assertIsNotNone(item)
+        self.mock_menu_item_class.assert_called_once()
+        call_args = self.mock_menu_item_class.call_args
+        self.assertIn("升级中", call_args[0][0])
+        # Verify enabled=False was passed
+        self.assertIn('enabled', call_args[1])
+        self.assertFalse(call_args[1]['enabled'])
 
 
 if __name__ == "__main__":

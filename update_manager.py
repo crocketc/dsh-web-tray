@@ -71,6 +71,67 @@ def _cache_latest_version(cfg: Dict[str, Any], version: str) -> None:
     cfg["lastKnownLatestVersion"] = version
 
 
+
+
+def build_upgrade_menu_item(
+    check_result: Dict[str, Any],
+    cfg: Dict[str, Any],
+    upgrade_callback,
+    upgrade_in_progress: bool = False,
+):
+    """构建升级菜单项。
+
+    Args:
+        check_result: check_for_update 的返回结果
+        cfg: 配置字典
+        upgrade_callback: 点击升级项时的回调函数
+        upgrade_in_progress: 是否正在升级中
+
+    Returns:
+        pystray.MenuItem 或 None（无更新时）
+    """
+    import pystray
+    
+    has_update = check_result.get("has_update", False)
+    if not has_update:
+        return None
+    
+    dsh_type = cfg.get("dshType", "")
+    latest_version = check_result.get("latest_version") or "最新版本"
+    reason = check_result.get("reason", "")
+    
+    if upgrade_in_progress:
+        # 升级中：显示"升级中…"并禁用
+        return pystray.MenuItem(
+            f"🔄 升级中…",
+            None,
+            enabled=False,
+        )
+    
+    # 根据安装类型生成不同的菜单项文本
+    if dsh_type in ("global", "local"):
+        # npm 安装：显示版本号
+        text = f"🆕 升级到 {latest_version}"
+    elif dsh_type == "manual":
+        # manual：不显示版本号，提示打开发布页
+        text = "🆕 有新版本（打开发布页）"
+    else:  # pnpm
+        # pnpm：显示提交数
+        if "落后" in reason:
+            # 提取提交数
+            import re
+            match = re.search(r'落后 (\d+) 提交', reason)
+            if match:
+                behind = match.group(1)
+                text = f"🆕 有更新（落后 {behind} 提交）"
+            else:
+                text = "🆕 有新版本"
+        else:
+            text = "🆕 有新版本"
+    
+    return pystray.MenuItem(text, upgrade_callback)
+
+
 class UpdateManager:
     """更新检测管理器：处理自动/手动检查、通知节流。"""
 
