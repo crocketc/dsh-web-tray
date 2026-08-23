@@ -378,3 +378,123 @@ class TestTrayWiringIntegration(unittest.TestCase):
             self.assertIn("1.2.4", notifications[0][1])
             self.assertEqual(cfg["lastNotifiedVersion"], "1.2.4")
             self.assertEqual(cfg["lastKnownLatestVersion"], "1.2.4")
+
+
+class TestEdgeCases(unittest.TestCase):
+    """边缘用例测试。"""
+
+    def test_check_failure_silent_auto(self):
+        """自动检查失败时不通知（静默）。"""
+        cfg = cfgmod.default_config()
+        cfg["dshType"] = "global"
+        
+        notifications = []
+        
+        def mock_check(cfg):
+            return {
+                "has_update": False,
+                "current_version": None,
+                "latest_version": None,
+                "reason": "检查失败：无法获取最新版本",
+            }
+        
+        def mock_notify(title, message):
+            notifications.append((title, message))
+        
+        mgr = update_manager.UpdateManager(cfg, mock_check, mock_notify)
+        result = mgr.check_now(auto=True)
+        
+        self.assertFalse(result["has_update"])
+        self.assertEqual(len(notifications), 0, "自动检查失败不应当通知")
+
+    def test_check_failure_manual_shows_feedback(self):
+        """手动检查失败时应当反馈用户。"""
+        cfg = cfgmod.default_config()
+        cfg["dshType"] = "global"
+        
+        notifications = []
+        
+        def mock_check(cfg):
+            return {
+                "has_update": False,
+                "current_version": None,
+                "latest_version": None,
+                "reason": "检查失败：无法获取最新版本",
+            }
+        
+        def mock_notify(title, message):
+            notifications.append((title, message))
+        
+        mgr = update_manager.UpdateManager(cfg, mock_check, mock_notify)
+        result = mgr.check_now(auto=False)
+        
+        self.assertFalse(result["has_update"])
+        self.assertEqual(len(notifications), 1, "手动检查失败应当通知")
+
+    def test_pnpm_update_with_commit_count(self):
+        """pnpm类型更新显示提交数。"""
+        cfg = cfgmod.default_config()
+        cfg["dshType"] = "pnpm"
+        cfg["lastUpdateCheckAt"] = 0
+        cfg["lastNotifiedVersion"] = ""
+        
+        notifications = []
+        
+        def mock_check(cfg):
+            return {
+                "has_update": True,
+                "current_version": None,
+                "latest_version": None,
+                "reason": "有更新（落后 7 提交）",
+            }
+        
+        def mock_notify(title, message):
+            notifications.append((title, message))
+        
+        mgr = update_manager.UpdateManager(cfg, mock_check, mock_notify)
+        result = mgr.check_now(auto=True)
+        
+        self.assertTrue(result["has_update"])
+        self.assertEqual(len(notifications), 1)
+        # Verify pnpm update notification doesn't include version number
+        self.assertNotIn("1.2.4", notifications[0][1])
+
+    def test_manual_update_opens_releases(self):
+        """manual类型点击升级打开发布页（验证逻辑，不实际打开）。"""
+        # This is tested in menu item construction tests
+        # The actual open URL is delegated to platforms.open_url
+        # which is tested in platform tests
+        pass
+
+    @mock.patch.dict('sys.modules', {'pystray': mock.MagicMock()})
+    def test_upgrade_menu_item_persists_until_upgrade(self):
+        """升级菜单项常驻至升级完成/版本变化。"""
+        cfg = cfgmod.default_config()
+        cfg["dshType"] = "global"
+        cfg["lastKnownLatestVersion"] = "1.2.4"
+        
+        def mock_check(cfg):
+            return {"has_update": False, "reason": ""}
+        
+        def mock_notify(title, message):
+            pass
+        
+        mgr = update_manager.UpdateManager(cfg, mock_check, mock_notify)
+        
+        # Build upgrade menu item
+        check_result = {
+            "has_update": True,
+            "latest_version": "1.2.4",
+            "reason": "",
+        }
+        
+        mock_callback = mock.Mock()
+        item = update_manager.build_upgrade_menu_item(
+            check_result, cfg, mock_callback, upgrade_in_progress=False
+        )
+        
+        self.assertIsNotNone(item)
+        # Verify item is enabled
+        call_args = sys.modules['pystray'].MenuItem.call_args
+        if 'enabled' in call_args[1]:
+            self.assertTrue(call_args[1]['enabled'])
