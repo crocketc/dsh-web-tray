@@ -1,14 +1,7 @@
 """updater 升级命令构造与静默执行测试（票 03）。"""
-import os
-import subprocess
 import sys
-import threading
-import time
 import unittest
-from pathlib import Path
-from unittest import mock
 
-from tests import new_test_dir
 
 import updater
 

@@ -1,12 +1,8 @@
 """execute_upgrade 静默执行器测试（票 03）。"""
-import os
 import subprocess
 import sys
-import tempfile
-import threading
 import time
 import unittest
-from pathlib import Path
 from unittest import mock
 
 from tests import new_test_dir
