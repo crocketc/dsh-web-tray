@@ -1,6 +1,5 @@
 """Upgrade result loop and one-click restart tests (ticket 05)."""
 import sys
-import time
 import unittest
 from unittest import mock
 

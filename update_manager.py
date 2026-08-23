@@ -316,7 +316,6 @@ class UpdateManager:
     
     def _get_manual_command(self) -> str:
         """获取手动升级命令文案（用于失败通知）。"""
-        import updater
         
         dsh_type = self.cfg.get("dshType", "")
         latest_version = self.cfg.get("lastKnownLatestVersion", "latest")
