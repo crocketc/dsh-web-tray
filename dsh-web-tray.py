@@ -411,7 +411,7 @@ class TrayApp:
         return items
 
     def on_upgrade(self, icon=None, item=None) -> None:
-        """处理升级菜单点击。"""
+        """处理升级菜单点击（票 05：接升级结果闭环）。"""
         if self.update_mgr is None or self.cfg is None:
             return
         
@@ -432,24 +432,49 @@ class TrayApp:
                 
                 try:
                     # 调用 ticket 03 的升级执行器
-                    cmd = updater.build_upgrade_command(self.cfg)
-                    if cmd is None:
+                    cmd = updater.build_upgrade_command(self.cfg, self.cfg.get("lastKnownLatestVersion", "latest"))
+                    if cmd is None or cmd.get("argv") is None:
                         log.error("构建升级命令失败")
-                        self._notify("升级", "升级命令构建失败")
+                        self.update_mgr.handle_upgrade_result(
+                            success=False,
+                            stderr_tail="升级命令构建失败",
+                            state=self.state
+                        )
                         return
                     
                     log.info("发起升级：%s", cmd)
-                    updater.execute_upgrade(cmd)
                     
-                    # 升级启动成功（结果处理在 ticket 05）
-                    self._notify("升级", "升级已发起，完成后请重启 DSH")
+                    # 定义升级结果回调（票 05）
+                    def on_upgrade_done(exit_code: int, stderr_tail: str) -> None:
+                        """升级完成回调（票 05：结果闭环）。"""
+                        success = exit_code == 0
+                        log.info("升级完成：exit_code=%d, stderr_tail=%s", exit_code, stderr_tail[:100] if stderr_tail else "")
+                        # 通知 UpdateManager 处理结果
+                        self.update_mgr.handle_upgrade_result(
+                            success=success,
+                            stderr_tail=stderr_tail,
+                            state=self.state
+                        )
+                        # 刷新菜单（可能显示重启项）
+                        self._refresh_ui()
+                    
+                    # 执行升级（传入回调）
+                    updater.execute_upgrade(
+                        cmd["argv"],
+                        cmd.get("cwd"),
+                        str(cfgmod.upgrade_log_path()),
+                        on_upgrade_done
+                    )
+                    
+                    log.info("升级已发起，等待回调")
                 except Exception as e:
-                    log.exception("升级失败")
-                    self._notify("升级", f"升级失败：{e}")
-                finally:
-                    # 注意：这里不立即清除 upgrade_in_progress
-                    # 因为升级是异步的，结果处理在 ticket 05
-                    pass
+                    log.exception("升级异常")
+                    self.update_mgr.handle_upgrade_result(
+                        success=False,
+                        stderr_tail=f"升级异常: {str(e)}",
+                        state=self.state
+                    )
+                    self._refresh_ui()
             
             threading.Thread(target=worker, daemon=True, name="upgrade-executor").start()
 
@@ -512,6 +537,8 @@ class TrayApp:
             pystray.MenuItem("重新配置", self.on_reconfigure),
             # 升级项（有更新时动态显示）
             *self._build_upgrade_menu_items(),
+            # 重启以应用新版本（升级成功后显示，票 05）
+            *self._build_restart_menu_item(),
             sep,
             pystray.MenuItem(
                 "帮助",

@@ -225,3 +225,144 @@ class UpdateManager:
         """设置升级状态。"""
         with self._lock:
             self._upgrade_in_progress = in_progress
+
+    def handle_upgrade_result(self, success: bool, stderr_tail: str, state: str) -> None:
+        """处理升级结果回调（票 05）。
+
+        Args:
+            success: 升级是否成功
+            stderr_tail: 错误信息摘要（失败时）
+            state: 当前 DSH 进程状态（running/starting/external/stopped/crashed/start_failed）
+
+        行为：
+        - 成功：发送「升级完成，建议重启」通知，根据状态显示/隐藏重启菜单项
+        - external 态：通知提示「自行重启外部实例」，不显示一键重启
+        - 失败：通知含错误摘要+手动命令，升级项保持可重试
+        - 超时：特殊处理，清理升级状态
+        - 成功后清除缓存键并触发重新检查
+        """
+        # 清除升级进行中状态
+        self.set_upgrade_in_progress(False)
+        
+        if success:
+            # 成功路径
+            if state in ("running", "starting"):
+                # 自管进程：显示「升级完成，建议重启」
+                self._notify_fn(
+                    "升级完成",
+                    "升级成功！建议重启 DSH 以应用新版本。"
+                )
+                # 设置重启标记（供托盘显示重启菜单项）
+                self.cfg["_showRestartAfterUpgrade"] = True
+                log.info("升级成功，状态=%s，显示重启提示", state)
+            elif state == "external":
+                # 外部进程：提示自行重启
+                self._notify_fn(
+                    "升级完成",
+                    "升级成功！由于 DSH 为外部启动，请自行重启 DSH 以应用新版本。"
+                )
+                log.info("升级成功，状态=external，提示用户自行重启")
+            else:
+                # 其他状态：通用提示
+                self._notify_fn(
+                    "升级完成",
+                    "升级成功！请重启 DSH 以应用新版本。"
+                )
+                log.info("升级成功，状态=%s", state)
+            
+            # 清除缓存键
+            self._clear_version_cache()
+            
+            # 触发重新检查版本
+            self._trigger_version_recheck()
+        else:
+            # 失败路径
+            # 判断是否为超时
+            is_timeout = "超时" in stderr_tail or "timeout" in stderr_tail.lower()
+            
+            if is_timeout:
+                # 超时处理
+                self._notify_fn(
+                    "升级超时",
+                    f"升级超过30分钟未完成，已终止。{stderr_tail}"
+                )
+                log.warning("升级超时：%s", stderr_tail)
+            else:
+                # 一般失败：显示错误摘要+手动命令
+                manual_command = self._get_manual_command()
+                message = f"升级失败：{stderr_tail}\n\n手动命令：\n{manual_command}"
+                self._notify_fn("升级失败", message)
+                log.error("升级失败：%s", stderr_tail)
+            
+            # 失败后升级项保持可重试（已在 set_upgrade_in_progress(False) 中清理）
+    
+    def _clear_version_cache(self) -> None:
+        """清除版本缓存键。"""
+        self.cfg.pop("lastKnownLatestVersion", None)
+        self.cfg.pop("lastNotifiedVersion", None)
+        log.debug("已清除版本缓存键")
+    
+    def _trigger_version_recheck(self) -> None:
+        """触发版本重新检查（后台线程，不阻塞）。"""
+        def recheck_worker():
+            try:
+                log.info("触发升级后版本重新检查")
+                self.check_now(auto=True)
+            except Exception:
+                log.exception("升级后版本重新检查失败")
+        
+        thread = threading.Thread(target=recheck_worker, name="upgrade-recheck", daemon=True)
+        thread.start()
+    
+    def _get_manual_command(self) -> str:
+        """获取手动升级命令文案（用于失败通知）。"""
+        import updater
+        
+        dsh_type = self.cfg.get("dshType", "")
+        latest_version = self.cfg.get("lastKnownLatestVersion", "latest")
+        
+        if dsh_type == "global":
+            return f"npm install -g @deepseek-ai/dsh@{latest_version}"
+        elif dsh_type == "local":
+            dsh_dir = self.cfg.get("dshDir", "")
+            if dsh_dir:
+                return f"cd {dsh_dir} && npm install @deepseek-ai/dsh@{latest_version}"
+            else:
+                return f"npm install @deepseek-ai/dsh@{latest_version}"
+        elif dsh_type == "pnpm":
+            dsh_dir = self.cfg.get("dshDir", "")
+            if dsh_dir:
+                return f"cd {dsh_dir} && git pull && pnpm install && pnpm run build"
+            else:
+                return "git pull && pnpm install && pnpm run build"
+        elif dsh_type == "manual":
+            return "请手动升级：访问 https://github.com/deepseek-ai/dsh/releases"
+        else:
+            return f"未知安装类型：{dsh_type}"
+
+
+def build_restart_menu_item(state: str, restart_callback) -> Any:
+    """构建「重启以应用新版本」菜单项（票 05）。
+
+    Args:
+        state: 当前 DSH 进程状态
+        restart_callback: 点击重启时的回调函数
+
+    Returns:
+        pystray.MenuItem 或 None（不需要重启时）
+
+    显示条件：
+    - 仅在 self-managed 状态（running/starting）时显示
+    - external/stopped/crashed/start_failed 不显示
+    - 点击才重启，绝不自动重启
+    """
+    import pystray
+    
+    # 只在自管进程状态显示
+    if state not in ("running", "starting"):
+        return None
+    
+    return pystray.MenuItem(
+        "🔄 重启以应用新版本",
+        restart_callback,
+    )
