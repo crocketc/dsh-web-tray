@@ -6,7 +6,6 @@ from unittest import mock
 
 import config as cfgmod
 import update_manager
-import updater
 
 
 class TestUpdateCheckScheduling(unittest.TestCase):
@@ -479,7 +478,7 @@ class TestEdgeCases(unittest.TestCase):
         def mock_notify(title, message):
             pass
         
-        mgr = update_manager.UpdateManager(cfg, mock_check, mock_notify)
+        update_manager.UpdateManager(cfg, mock_check, mock_notify)
         
         # Build upgrade menu item
         check_result = {

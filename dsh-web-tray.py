@@ -362,10 +362,10 @@ class TrayApp:
         
         def worker() -> None:
             try:
-                result = self.update_mgr.check_now(auto=False)
+                self.update_mgr.check_now(auto=False)
                 # 结果已通过通知反馈，这里只需刷新菜单
                 self._refresh_ui()
-            except Exception as e:
+            except Exception:
                 log.exception("手动检查更新失败")
                 self._notify("检查更新", "检查失败，请查看日志")
         
@@ -416,7 +416,6 @@ class TrayApp:
             return
         
         dsh_type = self.cfg.get("dshType", "")
-        latest_version = self.cfg.get("lastKnownLatestVersion", "")
         
         if dsh_type == "manual":
             # manual：打开 DSH 发布页
@@ -565,8 +564,8 @@ def _cmd_check_update() -> int:
         return 0
     
     if dsh_type not in ("global", "local"):
-        print(f"当前版本: 未知")
-        print(f"最新版本: 未知")
+        print("当前版本: 未知")
+        print("最新版本: 未知")
         print(f"结论: 未知安装类型: {dsh_type}")
         return 0
     

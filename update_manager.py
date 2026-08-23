@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import time
 import threading
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 log = logging.getLogger("dsh-web-tray")
 
@@ -103,7 +103,7 @@ def build_upgrade_menu_item(
     if upgrade_in_progress:
         # 升级中：显示"升级中…"并禁用
         return pystray.MenuItem(
-            f"🔄 升级中…",
+            "🔄 升级中…",
             None,
             enabled=False,
         )
