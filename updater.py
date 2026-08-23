@@ -19,16 +19,19 @@ import json
 import re
 import subprocess
 import sys
+import threading
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 # 包名常量
 DSH_NPM_PACKAGE = "@deepseek-ai/dsh"
 # 官方 registry（最终回退）
 OFFICIAL_REGISTRY = "https://registry.npmjs.org"
+# 平台检测
+IS_WINDOWS = sys.platform == "win32"
 
 # semver 正则（含 prerelease）
 # 不用 ^/$ 锚点，以匹配输出字符串中的版本号
@@ -381,3 +384,154 @@ def build_upgrade_command(cfg: Dict[str, Any], target_version: str) -> Dict[str,
         result["manual_text"] = f"未知安装类型: {dsh_type}"
 
     return result
+
+# 升级日志轮转大小（5MB，与 dsh_process 保持一致）
+UPGRADE_LOG_ROTATE_BYTES = 5 * 1024 * 1024
+# 升级执行超时（30分钟）
+UPGRADE_TIMEOUT_SECONDS = 30 * 60
+
+
+def _rotate_upgrade_log_if_needed(log_path: Path) -> None:
+    """日志文件超过限制时轮转（.1 后缀）。"""
+    try:
+        if log_path.exists() and log_path.stat().st_size > UPGRADE_LOG_ROTATE_BYTES:
+            # 重命名为 .1
+            rotated = log_path.with_suffix(log_path.suffix + ".1")
+            log_path.replace(rotated)
+    except OSError:
+        pass  # 轮转失败不影响主流程
+
+
+def _get_stderr_tail(log_path: Path, max_chars: int = 500) -> str:
+    """从日志文件中提取 stderr 尾部摘要。
+
+    读取最后约 max_chars 字符，尽量按行截断。
+    """
+    try:
+        if not log_path.exists():
+            return ""
+        content = log_path.read_text(encoding="utf-8", errors="replace")
+        if len(content) <= max_chars:
+            return content
+        # 从最后往前找换行符，尽量按行截断
+        tail = content[-max_chars:]
+        first_newline = tail.find("\n")
+        if first_newline > 0:
+            return tail[first_newline + 1:]
+        return tail
+    except OSError:
+        return ""
+
+
+def execute_upgrade(
+    argv: List[str],
+    cwd: Optional[str],
+    log_path: str,
+    on_done: callable,
+) -> None:
+    """在后台线程静默执行升级命令。
+
+    Args:
+        argv: 命令 argv 数组（如 ["npm", "install", "-g", "@deepseek-ai/dsh@1.2.3"]）
+        cwd: 工作目录（global 安装为 None）
+        log_path: 升级日志文件路径
+        on_done: 回调函数，签名 on_done(exit_code: int, stderr_tail: str)
+
+    执行特性：
+    - Windows: CREATE_NO_WINDOW（无窗口）
+    - POSIX: start_new_session（无终端）
+    - stdout/stderr 合并写日志文件（含轮转）
+    - 超时后终止子进程
+    - 失败时返回 stderr 尾部摘要（约 500 字符）
+    """
+    def _run() -> None:
+        log_file_path = Path(log_path)
+        proc = None
+        exit_code = -1
+        stderr_tail = ""
+
+        try:
+            # 轮转旧日志
+            _rotate_upgrade_log_if_needed(log_file_path)
+
+            # 准备子进程参数
+            kwargs: Dict[str, Any] = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.STDOUT,  # 合并到 stdout
+                "stdin": subprocess.DEVNULL,
+                "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
+            }
+            if cwd:
+                kwargs["cwd"] = cwd
+
+            # 平台特定参数
+            if IS_WINDOWS:
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+            else:
+                kwargs["start_new_session"] = True
+
+            # 启动子进程
+            proc = subprocess.Popen(argv, **kwargs)
+
+            # 写日志（参考 dsh_process._drain）
+            log_file = None
+            try:
+                log_file_path.parent.mkdir(parents=True, exist_ok=True)
+                log_file = log_file_path.open("a", encoding="utf-8")
+            except OSError:
+                log_file = None
+
+            try:
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    if log_file is not None:
+                        try:
+                            log_file.write(line)
+                            log_file.flush()
+                        except OSError:
+                            log_file = None
+            finally:
+                if log_file is not None:
+                    try:
+                        log_file.close()
+                    except OSError:
+                        pass
+                if proc.stdout is not None:
+                    try:
+                        proc.stdout.close()
+                    except OSError:
+                        pass
+
+            # 等待进程结束（带超时）
+            try:
+                exit_code = proc.wait(timeout=UPGRADE_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                # 超时：终止进程
+                try:
+                    proc.kill()
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+                exit_code = -1  # 超时标记
+                stderr_tail = "升级超时（超过30分钟），已终止进程"
+
+            # 提取 stderr 尾部（仅当非超时且非零退出时）
+            if exit_code != 0 and not stderr_tail:
+                stderr_tail = _get_stderr_tail(log_file_path)
+
+        except Exception as e:
+            # 异常情况
+            exit_code = -1
+            stderr_tail = f"升级执行异常: {str(e)}"
+        finally:
+            # 回调通知
+            try:
+                on_done(exit_code, stderr_tail)
+            except Exception:
+                pass  # 回调失败不影响主流程
+
+    # 在后台线程执行
+    thread = threading.Thread(target=_run, name="upgrade-executor", daemon=True)
+    thread.start()
