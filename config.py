@@ -43,6 +43,11 @@ def tray_log_path() -> Path:
     return log_dir() / "tray.log"
 
 
+
+def upgrade_log_path() -> Path:
+    """返回升级日志文件路径。"""
+    return log_dir() / "upgrade.log"
+
 def default_config() -> Dict[str, Any]:
     return {
         "version": CONFIG_VERSION,
