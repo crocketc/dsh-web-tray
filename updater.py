@@ -234,6 +234,90 @@ def current_version(dsh_argv: list[str]) -> Optional[str]:
     except (subprocess.SubprocessError, OSError):
         return None
 
+def _fetch_git_remote(repo_path: str, remote_ref: str = "origin/main") -> Dict[str, Any]:
+    """fetch git 远端并检查落后提交数。
+
+    Args:
+        repo_path: git 仓库路径
+        remote_ref: 远端引用（默认 origin/main）
+
+    Returns:
+        判定结果字典：
+        {
+            "status": "behind" | "current" | "unknown",  # 状态
+            "behind_count": int,                          # 落后提交数
+            "reason": str,                                # 未知状态原因
+        }
+
+    超时/非零退出/异常 → status="unknown"。
+    """
+    result = {
+        "status": "unknown",
+        "behind_count": 0,
+        "reason": "",
+    }
+
+    # 1. git fetch（超时 5 秒）
+    try:
+        # remote_ref 格式为 "origin/main"，需要拆分为 remote 和 branch
+        parts = remote_ref.split("/", 1)
+        if len(parts) == 2:
+            remote, branch = parts
+            fetch_cmd = ["git", "-C", repo_path, "fetch", "--quiet", remote, branch]
+        else:
+            # 如果没有斜杠，直接使用
+            fetch_cmd = ["git", "-C", repo_path, "fetch", "--quiet", remote_ref]
+        subprocess.run(fetch_cmd, capture_output=True, timeout=5, check=True)
+    except subprocess.TimeoutExpired:
+        result["reason"] = "git fetch timeout"
+        return result
+    except subprocess.CalledProcessError as e:
+        # 非 128 错误可能是网络问题，也视为未知
+        stderr = ""
+        if hasattr(e, "stderr") and e.stderr:
+            # Handle both bytes and string
+            if isinstance(e.stderr, bytes):
+                stderr = e.stderr.decode("utf-8", errors="ignore").lower()
+            else:
+                stderr = str(e.stderr).lower()
+        
+                
+        if "not a git repository" in stderr:
+            result["reason"] = "not a git repository"
+        elif "does not appear to be a git repository" in stderr:
+            result["reason"] = "no remote configured"
+        else:
+            result["reason"] = f"git fetch failed: {e.returncode}"
+        return result
+    except (OSError, FileNotFoundError):
+        result["reason"] = "git command not found"
+        return result
+
+    # 2. 检查是否 detached HEAD
+    try:
+        # git symbolic-ref HEAD 应该返回 refs/heads/main
+        symbolic_cmd = ["git", "-C", repo_path, "symbolic-ref", "--short", "HEAD"]
+        subprocess.run(symbolic_cmd, capture_output=True, timeout=5, check=True)
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
+        result["reason"] = "detached HEAD"
+        return result
+
+    # 3. 统计落后提交数：HEAD..origin/main
+    try:
+        count_cmd = ["git", "-C", repo_path, "rev-list", "--count", f"HEAD..{remote_ref}"]
+        count_result = subprocess.run(count_cmd, capture_output=True, timeout=5, check=True)
+        behind_count = int(count_result.stdout.strip())
+        
+        result["behind_count"] = behind_count
+        if behind_count > 0:
+            result["status"] = "behind"
+        else:
+            result["status"] = "current"
+        return result
+    except (subprocess.TimeoutExpired, subprocess.CalledProcessError, ValueError) as e:
+        result["reason"] = f"failed to count commits: {str(e)}"
+        return result
+
 
 def check_for_update(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """检查是否有新版本可更新。
@@ -254,12 +338,52 @@ def check_for_update(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """
     dsh_type = cfg.get("dshType", "")
 
-    # pnpm/manual 暂不支持（票 02）
-    if dsh_type in ("pnpm", "manual"):
+    # pnpm 源码安装：git 判定（票 02）
+    if dsh_type == "pnpm":
+        dsh_dir = cfg.get("dshDir", "")
+        if not dsh_dir:
+            return {
+                "current_version": None,
+                "latest_version": None,
+                "has_update": None,
+                "behind_count": 0,
+                "reason": "未知，跳过判定（无 dshDir）",
+            }
+        
+        git_result = _fetch_git_remote(dsh_dir)
+        if git_result["status"] == "unknown":
+            return {
+                "current_version": None,
+                "latest_version": None,
+                "has_update": None,
+                "behind_count": 0,
+                "reason": "未知，跳过判定",
+            }
+        elif git_result["status"] == "behind":
+            behind = git_result["behind_count"]
+            return {
+                "current_version": None,
+                "latest_version": None,
+                "has_update": True,
+                "behind_count": behind,
+                "reason": f"有更新（落后 {behind} 提交）",
+            }
+        else:  # current
+            return {
+                "current_version": None,
+                "latest_version": None,
+                "has_update": False,
+                "behind_count": 0,
+                "reason": "已是最新",
+            }
+
+    # manual：不支持（票 02）
+    if dsh_type == "manual":
         return {
             "current_version": None,
             "latest_version": None,
             "has_update": None,
+            "behind_count": 0,
             "reason": "未知，跳过判定",
         }
 
