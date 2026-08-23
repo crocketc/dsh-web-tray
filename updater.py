@@ -264,7 +264,7 @@ def _fetch_git_remote(repo_path: str, remote_ref: str = "origin/main") -> Dict[s
         else:
             # 如果没有斜杠，直接使用
             fetch_cmd = ["git", "-C", repo_path, "fetch", "--quiet", remote_ref]
-        result_run = subprocess.run(fetch_cmd, capture_output=True, timeout=5, check=True)
+        subprocess.run(fetch_cmd, capture_output=True, timeout=5, check=True)
     except subprocess.TimeoutExpired:
         result["reason"] = "git fetch timeout"
         return result
