@@ -14,6 +14,7 @@
     python dsh-web-tray.py            # 启动托盘
     python dsh-web-tray.py --wizard   # 直接运行配置向导
     python dsh-web-tray.py --version
+    python dsh-web-tray.py --check-update  # 检查更新（诊断）
 """
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ import config as cfgmod
 import detect
 import platforms
 import trayicons
+import updater
 from dsh_process import DshProcess, port_in_use
 from singleinstance import SingleInstance
 
@@ -431,13 +433,58 @@ class TrayApp:
 
 
 # --------------------------------------------------------------------------
+def _cmd_check_update() -> int:
+    """--check-update 入口：打印更新检测结果。"""
+    cfg = cfgmod.load_config()
+    if cfg is None:
+        print("错误：无有效配置，请先运行配置向导")
+        return 0
+    
+    dsh_type = cfg.get("dshType", "")
+    print(f"安装类型: {dsh_type}")
+    
+    if dsh_type in ("pnpm", "manual"):
+        print("当前版本: 未知")
+        print("最新版本: 未知")
+        print("结论: 未知，跳过判定")
+        return 0
+    
+    if dsh_type not in ("global", "local"):
+        print(f"当前版本: 未知")
+        print(f"最新版本: 未知")
+        print(f"结论: 未知安装类型: {dsh_type}")
+        return 0
+    
+    # global/local：走 registry 检测
+    result = updater.check_for_update(cfg)
+    current = result.get("current_version") or "未知"
+    latest = result.get("latest_version") or "未知"
+    reason = result.get("reason", "")
+    
+    print(f"当前版本: {current}")
+    print(f"最新版本: {latest}")
+    
+    if result.get("has_update"):
+        print(f"结论: 有新版本 → {latest}")
+    else:
+        print(f"结论: {reason}")
+    
+    return 0
+
+
 def main(argv: Optional[list] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    _setup_logging()
-
+    
+    # 诊断入口不需要日志，先处理
     if "--version" in argv:
         print(f"dsh-web-tray {__version__}")
         return 0
+    if "--check-update" in argv:
+        return _cmd_check_update()
+    
+    # 其他入口需要日志
+    _setup_logging()
+
     if "--wizard" in argv:
         import wizard
 

@@ -53,6 +53,10 @@ def default_config() -> Dict[str, Any]:
         "dshPort": DEFAULT_PORT,        # 0 = 系统自动分配（从 URL 行回读）
         "lastUrl": "",
         "autostart": False,
+        # 更新检测相关（ADR-0005）
+        "lastUpdateCheckAt": 0,         # 上次自动检查时间戳
+        "lastNotifiedVersion": "",      # 上次通知的目标版本（节流）
+        "lastKnownLatestVersion": "",   # 缓存的最新版本（菜单显示用）
     }
 
 
