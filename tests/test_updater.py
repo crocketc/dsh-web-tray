@@ -235,6 +235,19 @@ class TestCurrentVersion(unittest.TestCase):
             version = updater.current_version(["/usr/bin/dsh", "--version"])
             self.assertIsNone(version)
 
+    def test_env_uses_build_subprocess_env(self):
+        """子进程环境用增强 PATH（macOS GUI PATH 陷阱：node shebang 需解释器）。"""
+        fake_env = {"PATH": "/opt/homebrew/bin:/usr/bin:/bin"}
+        with mock.patch.object(updater, "build_subprocess_env", return_value=fake_env) as mock_env, \
+             mock.patch.object(updater.subprocess, "run") as mock_run:
+            mock_run.return_value = mock.Mock(
+                stdout="dsh 0.1.0-rc.7\n", returncode=0
+            )
+            version = updater.current_version(["/usr/local/bin/dsh", "--version"])
+            self.assertEqual(version, "0.1.0-rc.7")
+            mock_env.assert_called_once()
+            self.assertEqual(mock_run.call_args[1]["env"], fake_env)
+
     def test_windows_path(self):
         """Windows 路径测试"""
         with mock.patch.object(updater.subprocess, "run") as mock_run, \

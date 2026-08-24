@@ -93,7 +93,7 @@ jobs:
           python-version: '3.11'
       # tkinter 向导（打包进 app 的 wizard.py 依赖）；GH Actions 的 setup-python 无 tk，用框架版 brew Python
       - run: brew install python-tk
-      - run: pip3 install pyinstaller pystray psutil pillow
+      - run: pip3 install pyinstaller pystray psutil pillow pyobjc-framework-UserNotifications
       - name: Build app + DMG
         run: bash scripts/build-app.sh
       - name: Rename DMG with arch and version

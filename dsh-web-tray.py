@@ -23,6 +23,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -38,7 +39,7 @@ import updater
 from dsh_process import DshProcess, port_in_use
 from singleinstance import SingleInstance
 
-__version__ = "1.6.0"
+__version__ = "1.6.1"
 
 APP_NAME = "DSH Web Tray"
 
@@ -155,6 +156,8 @@ class TrayApp:
     # ----------------------------------------------------------------- 编排
     def bootstrap(self) -> None:
         """后台引导：配置缺失则拉向导，然后启动 dsh web。"""
+        # 尽早请求通知授权（macOS 首次弹询问；拒绝则回退 pystray）
+        self._request_notification_authorization()
         if self.cfg is None:
             log.info("无有效配置，启动配置向导")
             ok = self._run_wizard(install_only=False)
@@ -519,15 +522,85 @@ class TrayApp:
                 pass
 
     # ----------------------------------------------------------------- 通知
+    def _request_notification_authorization(self) -> None:
+        """macOS 首次请求通知授权（UNUserNotificationCenter）。
+
+        pystray 的 macOS 通知走 osascript（macOS 15 上常被静默丢弃），
+        原生框架需要用户授权后才可靠送达；失败静默（回退 pystray）。
+        """
+        if sys.platform != "darwin":
+            return
+        try:
+            from UserNotifications import (
+                UNAuthorizationOptionAlert,
+                UNAuthorizationOptionSound,
+                UNUserNotificationCenter,
+            )
+
+            center = UNUserNotificationCenter.currentNotificationCenter()
+
+            def _auth_handler(granted: bool, error) -> None:  # pragma: no cover
+                if error is not None:
+                    log.warning("通知授权失败：%s", error)
+                else:
+                    log.info("通知授权：granted=%s", granted)
+
+            center.requestAuthorizationWithOptions_completionHandler_(
+                UNAuthorizationOptionAlert | UNAuthorizationOptionSound,
+                _auth_handler,
+            )
+        except Exception:
+            log.exception("请求通知授权失败（回退 pystray 通知）")
+
     def _notify(self, title: str, message: str) -> None:
         log.info("[notify] %s: %s", title, message)
         icon = self.icon
         if icon is None:
             return
         try:
-            icon.notify(message, title)
-        except Exception:  # macOS 后端 NotImplementedError 等
+            if sys.platform == "darwin":
+                self._notify_macos(title, message)
+            else:
+                icon.notify(message, title)
+        except Exception:  # 通知失败不影响主流程
             pass
+
+    def _notify_macos(self, title: str, message: str) -> None:
+        """macOS 原生通知（UNUserNotificationCenter，现代 API）。
+
+        pystray 的 macOS 通知经 osascript 子进程投递，在 macOS 15+ 上
+        常被静默丢弃（无授权提示）；原生框架授权后可靠送达、显示应用名。
+        任一环节失败回退 pystray。
+        """
+        try:
+            from UserNotifications import (
+                UNMutableNotificationContent,
+                UNNotificationRequest,
+                UNUserNotificationCenter,
+            )
+
+            center = UNUserNotificationCenter.currentNotificationCenter()
+            content = UNMutableNotificationContent.alloc().init()
+            content.setTitle_(title)
+            content.setBody_(message)
+            request = UNNotificationRequest.requestWithIdentifier_(
+                f"dsh-web-tray-{int(time.time() * 1000)}",
+                content=content,
+                trigger=None,
+            )
+
+            def _delivery_handler(error) -> None:  # pragma: no cover
+                if error is not None:
+                    log.warning("通知投递失败：%s", error)
+
+            center.addNotificationRequest_withCompletionHandler_(
+                request, _delivery_handler
+            )
+        except Exception:
+            # 回退 pystray（Windows 走原生；macOS 走 osascript）
+            icon = self.icon
+            if icon is not None:
+                icon.notify(message, title)
 
     # ----------------------------------------------------------------- 菜单
     def _build_menu(self):

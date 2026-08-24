@@ -26,6 +26,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from dsh_process import build_subprocess_env
+
 # 包名常量
 DSH_NPM_PACKAGE = "@deepseek-ai/dsh"
 # 官方 registry（最终回退）
@@ -206,6 +208,10 @@ def current_version(dsh_argv: list[str]) -> Optional[str]:
 
     使用绝对路径执行（不依赖 PATH），10s 超时。
     Windows 使用 CREATE_NO_WINDOW 避免弹窗。
+
+    子进程环境用 build_subprocess_env 增强 PATH：dsh 多为 node 脚本
+    （shebang #!/usr/bin/env node），Finder/LaunchAgent 启动的 GUI 应用
+    PATH 只有系统目录，解释器找不到会 127 退出（macOS GUI PATH 陷阱）。
     """
     if not dsh_argv:
         return None
@@ -216,6 +222,8 @@ def current_version(dsh_argv: list[str]) -> Optional[str]:
             "capture_output": True,
             "text": True,
             "timeout": 10,
+            # macOS GUI 应用 PATH 受限：补常见工具目录（dsh_process 同款对策）
+            "env": build_subprocess_env(),
         }
         # Windows：无窗口启动
         if sys.platform == "win32":

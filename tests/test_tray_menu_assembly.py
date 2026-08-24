@@ -97,6 +97,37 @@ class TestRestartMenuItem(_MenuAssemblyTest):
             items = self.app._build_restart_menu_item()
             self.assertEqual(len(items), 1, state)
 
+
+class TestNotificationChannel(_MenuAssemblyTest):
+    """通知通道：macOS 原生（UNUserNotificationCenter）与 pystray 回退。"""
+
+    def test_non_darwin_uses_pystray_notify(self):
+        """非 macOS 平台走 pystray notify。"""
+        self.app.icon = mock.Mock()
+        with mock.patch.object(self.main.sys, "platform", "win32"):
+            self.app._notify("t", "m")
+        self.app.icon.notify.assert_called_once_with("m", "t")
+
+    def test_darwin_notify_missing_framework_falls_back(self):
+        """UserNotifications 框架不可用时回退 pystray（不崩溃）。"""
+        self.app.icon = mock.Mock()
+        with mock.patch.object(self.main.sys, "platform", "darwin"), \
+                mock.patch.dict("sys.modules", {"UserNotifications": None}):
+            self.app._notify("t", "m")
+        self.app.icon.notify.assert_called_once_with("m", "t")
+
+    def test_notify_exception_swallowed(self):
+        """通知异常不影响主流程。"""
+        self.app.icon = mock.Mock()
+        self.app.icon.notify.side_effect = RuntimeError("boom")
+        with mock.patch.object(self.main.sys, "platform", "win32"):
+            self.app._notify("t", "m")  # 不应抛异常
+
+    def test_no_icon_no_notify(self):
+        """icon 未就绪时不发通知。"""
+        self.app.icon = None
+        self.app._notify("t", "m")
+
     def test_click_clears_flag_and_restarts(self):
         """点击后：清标记、复用 restart 动作、刷新菜单。"""
         self.app.cfg["_showRestartAfterUpgrade"] = True

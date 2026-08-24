@@ -217,6 +217,10 @@ class UpdateManager:
                 if result.get("has_update") is None:
                     # 无法判定（源码 fetch 失败 / manual 类型）：如实反馈，不谎称已最新
                     self._notify_fn("检查更新", f"无法判定是否有更新：{reason}")
+                elif reason.startswith("检查失败"):
+                    # 检测失败（取不到当前/最新版本等）：如实报失败，不说已最新
+                    detail = reason.split("：", 1)[-1] if "：" in reason else reason
+                    self._notify_fn("检查更新", f"检查失败：{detail}")
                 else:
                     current_version = result.get("current_version")
                     if current_version:

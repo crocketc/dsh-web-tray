@@ -10,7 +10,7 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     fi
 fi
 
-pip3 install pystray psutil pillow
+pip3 install pystray psutil pillow pyobjc-framework-UserNotifications
 
 python3 -c "import pystray, psutil, PIL; print('dependencies OK')"
 echo "Done."

@@ -148,6 +148,25 @@ class TestManualCheckFeedback(unittest.TestCase):
         self.assertIn("无法判定", message)
         self.assertIn("未知，跳过判定", message)
 
+    def test_failure_message_not_latest(self):
+        """检测失败时不谎称已是最新（GUI PATH 陷阱场景）。"""
+        cfg = cfgmod.default_config()
+        mgr, notifications = _make_mgr(cfg, {
+            "has_update": False,
+            "current_version": None,
+            "latest_version": None,
+            "reason": "检查失败：无法获取当前版本",
+        }, None)
+
+        mgr.check_now(auto=False)
+
+        self.assertEqual(len(notifications), 1)
+        title, message = notifications[0]
+        self.assertEqual(title, "检查更新")
+        self.assertIn("检查失败", message)
+        self.assertIn("无法获取当前版本", message)
+        self.assertNotIn("已是最新", message)
+
     def test_no_update_still_latest_message(self):
         """明确无更新时仍显示带版本号的已是最新。"""
         cfg = cfgmod.default_config()

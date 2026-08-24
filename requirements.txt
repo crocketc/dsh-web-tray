@@ -1,3 +1,5 @@
 pystray>=0.19
 psutil>=5.9
 pillow>=10.0
+pyobjc-framework-UserNotifications>=10.0; sys_platform == "darwin"  # macOS 原生通知（UNUserNotificationCenter）
+

@@ -3,6 +3,16 @@
 本项目所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循语义化版本（SemVer）。
 
+## [1.6.1] — 2026-08-24
+
+### 修复
+- **检测在 App 里一直失败**（macOS GUI PATH 陷阱）：dsh 是 node 脚本（shebang `#!/usr/bin/env node`），
+  Finder 启动的 App PATH 没有 node，`dsh --version` 以 127 退出导致永远「无法获取当前版本」——
+  检测子进程改用与 dsh 启动同款的增强 PATH（build_subprocess_env）
+- **检查失败被文案说成「已是最新」**：手动检查失败现在如实报「检查失败：<原因>」
+- **macOS 通知不显示**（pystray 走 osascript，macOS 15 上常被静默丢弃）：改用系统原生
+  UNUserNotificationCenter（首次启动弹授权询问，授权后可靠送达；失败回退 pystray）
+
 ## [1.6.0] — 2026-08-24
 
 ### 新增
