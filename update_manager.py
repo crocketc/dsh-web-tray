@@ -135,19 +135,31 @@ def build_upgrade_menu_item(
 class UpdateManager:
     """更新检测管理器：处理自动/手动检查、通知节流。"""
 
-    def __init__(self, cfg: Dict[str, Any], check_fn, notify_fn):
+    def __init__(self, cfg: Dict[str, Any], check_fn, notify_fn, save_fn=None):
         """初始化更新管理器。
 
         Args:
             cfg: 配置字典（会被修改以记录检查时间等）
             check_fn: 检查更新的函数，签名 cfg -> Dict[str, Any]
             notify_fn: 发送通知的函数，签名 (title: str, message: str) -> None
+            save_fn: 持久化配置的函数，签名 cfg -> Any（缺省 None 不持久化，
+                供测试注入；托盘接线传 config.save_config，重启后冷却/节流才生效）
         """
         self.cfg = cfg
         self._check_fn = check_fn
         self._notify_fn = notify_fn
+        self._save_fn = save_fn
         self._lock = threading.Lock()
         self._upgrade_in_progress = False
+
+    def _save(self) -> None:
+        """持久化更新状态键；失败只记日志不影响检查流程。"""
+        if self._save_fn is None:
+            return
+        try:
+            self._save_fn(self.cfg)
+        except Exception:
+            log.exception("保存更新状态到配置失败")
 
     def check_now(self, auto: bool = True) -> Dict[str, Any]:
         """立即执行更新检查。
@@ -175,10 +187,17 @@ class UpdateManager:
             
             # 通知节流
             if _should_notify_update(self.cfg, latest_version):
-                self._notify_fn(
-                    "发现新版本",
-                    f"DSH 有新版本可用：{latest_version}"
-                )
+                if result.get("latest_version"):
+                    self._notify_fn(
+                        "发现新版本",
+                        f"DSH 有新版本可用：{latest_version}"
+                    )
+                else:
+                    # 源码安装无版本号：用 reason（含落后提交数）作通知文案
+                    self._notify_fn(
+                        "发现新版本",
+                        f"DSH 源码有更新：{result.get('reason') or '远端有新提交'}"
+                    )
                 _record_notified_version(self.cfg, latest_version)
             
             # 缓存最新版本
@@ -191,8 +210,15 @@ class UpdateManager:
             
             # 手动检查：即使无更新也通知用户
             if not auto:
-                current_version = result.get("current_version") or "未知"
-                self._notify_fn("检查更新", f"当前已是最新版本 {current_version}")
+                if result.get("has_update") is None:
+                    # 无法判定（源码 fetch 失败 / manual 类型）：如实反馈，不谎称已最新
+                    self._notify_fn("检查更新", f"无法判定是否有更新：{reason}")
+                else:
+                    current_version = result.get("current_version") or "未知"
+                    self._notify_fn("检查更新", f"当前已是最新版本 {current_version}")
+        
+        # 持久化检查时间戳/节流/缓存键（ADR-0005：重启后冷却与节流仍生效）
+        self._save()
         
         return result
 
@@ -272,6 +298,9 @@ class UpdateManager:
             
             # 清除缓存键
             self._clear_version_cache()
+            
+            # 持久化缓存清除（防止重启后旧缓存复活升级项）
+            self._save()
             
             # 触发重新检查版本
             self._trigger_version_recheck()

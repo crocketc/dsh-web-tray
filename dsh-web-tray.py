@@ -177,7 +177,8 @@ class TrayApp:
         self.update_mgr = update_manager.UpdateManager(
             self.cfg,
             updater.check_for_update,
-            notify_callback
+            notify_callback,
+            save_fn=cfgmod.save_config
         )
         # 启动自动检查调度器（30秒后首次检查，之后每24小时）
         self.update_mgr.start_auto_check_scheduler(delay_seconds=30)
@@ -597,6 +598,8 @@ def _cmd_check_update() -> int:
         return 0
     
     # global/local：走 registry 检测
+    registry = updater._resolve_registry()
+    print(f"registry: {registry}")
     result = updater.check_for_update(cfg)
     current = result.get("current_version") or "未知"
     latest = result.get("latest_version") or "未知"
