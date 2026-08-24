@@ -43,6 +43,11 @@ def tray_log_path() -> Path:
     return log_dir() / "tray.log"
 
 
+
+def upgrade_log_path() -> Path:
+    """返回升级日志文件路径。"""
+    return log_dir() / "upgrade.log"
+
 def default_config() -> Dict[str, Any]:
     return {
         "version": CONFIG_VERSION,
@@ -53,6 +58,10 @@ def default_config() -> Dict[str, Any]:
         "dshPort": DEFAULT_PORT,        # 0 = 系统自动分配（从 URL 行回读）
         "lastUrl": "",
         "autostart": False,
+        # 更新检测相关（ADR-0005）
+        "lastUpdateCheckAt": 0,         # 上次自动检查时间戳
+        "lastNotifiedVersion": "",      # 上次通知的目标版本（节流）
+        "lastKnownLatestVersion": "",   # 缓存的最新版本（菜单显示用）
     }
 
 

@@ -14,6 +14,7 @@
     python dsh-web-tray.py            # 启动托盘
     python dsh-web-tray.py --wizard   # 直接运行配置向导
     python dsh-web-tray.py --version
+    python dsh-web-tray.py --check-update  # 检查更新（诊断）
 """
 from __future__ import annotations
 
@@ -32,6 +33,8 @@ import config as cfgmod
 import detect
 import platforms
 import trayicons
+import update_manager
+import updater
 from dsh_process import DshProcess, port_in_use
 from singleinstance import SingleInstance
 
@@ -87,6 +90,7 @@ class TrayApp:
         self.autostart_on = platforms.is_autostart_enabled()
         self._intentional_stop = False
         self._lifecycle_lock = threading.Lock()
+        self.update_mgr: Optional[update_manager.UpdateManager] = None
 
     # ------------------------------------------------------------ 状态与图标
     def _set_state(self, state: str, exit_code: Optional[int] = None) -> None:
@@ -160,6 +164,24 @@ class TrayApp:
                 self.quit()
                 return
         self.start_dsh()
+        self._init_update_manager()
+
+    def _init_update_manager(self) -> None:
+        """初始化更新管理器并启动自动检查调度。"""
+        if self.cfg is None:
+            return
+        
+        def notify_callback(title: str, message: str) -> None:
+            self._notify(title, message)
+        
+        self.update_mgr = update_manager.UpdateManager(
+            self.cfg,
+            updater.check_for_update,
+            notify_callback,
+            save_fn=cfgmod.save_config
+        )
+        # 启动自动检查调度器（30秒后首次检查，之后每24小时）
+        self.update_mgr.start_auto_check_scheduler(delay_seconds=30)
 
     def start_dsh(self) -> None:
         """启动（或接管显示）dsh web。线程安全：所有状态迁移持锁。"""
@@ -333,12 +355,131 @@ class TrayApp:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def on_check_update(self, icon=None, item=None) -> None:
+        """手动检查更新（帮助菜单）。"""
+        if self.update_mgr is None:
+            self._notify("检查更新", "更新管理器未初始化")
+            return
+        
+        def worker() -> None:
+            try:
+                self.update_mgr.check_now(auto=False)
+                # 结果已通过通知反馈，这里只需刷新菜单
+                self._refresh_ui()
+            except Exception:
+                log.exception("手动检查更新失败")
+                self._notify("检查更新", "检查失败，请查看日志")
+        
+        threading.Thread(target=worker, daemon=True, name="manual-check-update").start()
+
     def on_docs(self, icon=None, item=None) -> None:
         platforms.open_url(detect.DOCS_URL)
 
     def on_open_logs(self, icon=None, item=None) -> None:
         cfgmod.log_dir().mkdir(parents=True, exist_ok=True)
         platforms.reveal_path(str(cfgmod.log_dir()))
+
+    def _build_upgrade_menu_items(self) -> list:
+        """构建升级菜单项列表。"""
+        items = []
+        if self.cfg is None or self.update_mgr is None:
+            return items
+        
+        # 检查是否有缓存的更新信息
+        latest_version = self.cfg.get("lastKnownLatestVersion", "")
+        if not latest_version:
+            return items
+        
+        # 构造虚拟检查结果（用于菜单显示）
+        # 源码安装缓存的是 reason 文案（含落后提交数），透传给菜单构造器
+        reason = latest_version if "落后" in latest_version else ""
+        check_result = {
+            "has_update": True,
+            "latest_version": latest_version,
+            "reason": reason,
+        }
+        
+        # 构建升级菜单项
+        upgrade_in_progress = self.update_mgr.is_upgrade_in_progress()
+        upgrade_item = update_manager.build_upgrade_menu_item(
+            check_result,
+            self.cfg,
+            self.on_upgrade,
+            upgrade_in_progress=upgrade_in_progress,
+        )
+        
+        if upgrade_item is not None:
+            items.append(upgrade_item)
+        
+        return items
+
+    def on_upgrade(self, icon=None, item=None) -> None:
+        """处理升级菜单点击（票 05：接升级结果闭环）。"""
+        if self.update_mgr is None or self.cfg is None:
+            return
+        
+        dsh_type = self.cfg.get("dshType", "")
+        
+        if dsh_type == "manual":
+            # manual：打开 DSH 发布页
+            platforms.open_url("https://github.com/deepseek-ai/dsh/releases")
+        elif dsh_type in ("global", "local", "pnpm"):
+            # npm/pnpm：发起静默升级
+            if self.update_mgr.is_upgrade_in_progress():
+                self._notify("升级", "升级正在进行中，请稍候")
+                return
+            
+            def worker() -> None:
+                self.update_mgr.set_upgrade_in_progress(True)
+                self._refresh_ui()  # 刷新菜单显示"升级中…"
+                
+                try:
+                    # 调用 ticket 03 的升级执行器
+                    cmd = updater.build_upgrade_command(self.cfg, self.cfg.get("lastKnownLatestVersion", "latest"))
+                    if cmd is None or cmd.get("argv") is None:
+                        log.error("构建升级命令失败")
+                        self.update_mgr.handle_upgrade_result(
+                            success=False,
+                            stderr_tail="升级命令构建失败",
+                            state=self.state
+                        )
+                        return
+                    
+                    log.info("发起升级：%s", cmd)
+                    
+                    # 定义升级结果回调（票 05）
+                    def on_upgrade_done(exit_code: int, stderr_tail: str) -> None:
+                        """升级完成回调（票 05：结果闭环）。"""
+                        success = exit_code == 0
+                        log.info("升级完成：exit_code=%d, stderr_tail=%s", exit_code, stderr_tail[:100] if stderr_tail else "")
+                        # 通知 UpdateManager 处理结果
+                        self.update_mgr.handle_upgrade_result(
+                            success=success,
+                            stderr_tail=stderr_tail,
+                            state=self.state
+                        )
+                        # 刷新菜单（可能显示重启项）
+                        self._refresh_ui()
+                    
+                    # 执行升级（传入回调）
+                    updater.execute_upgrade(
+                        cmd["argv"],
+                        cmd.get("cwd"),
+                        str(cfgmod.upgrade_log_path()),
+                        on_upgrade_done
+                    )
+                    
+                    log.info("升级已发起，等待回调")
+                except Exception as e:
+                    log.exception("升级异常")
+                    self.update_mgr.handle_upgrade_result(
+                        success=False,
+                        stderr_tail=f"升级异常: {str(e)}",
+                        state=self.state
+                    )
+                    self._refresh_ui()
+            
+            threading.Thread(target=worker, daemon=True, name="upgrade-executor").start()
 
     def quit(self, icon=None, item=None) -> None:
         log.info("退出请求：优雅停止 dsh web…")
@@ -397,10 +538,15 @@ class TrayApp:
             pystray.MenuItem("停止", self.on_stop, enabled=can_stop),
             pystray.MenuItem(autostart_text, self.on_toggle_autostart, checked=autostart_checked),
             pystray.MenuItem("重新配置", self.on_reconfigure),
+            # 升级项（有更新时动态显示）
+            *self._build_upgrade_menu_items(),
+            # 重启以应用新版本（升级成功后显示，票 05）
+            *self._build_restart_menu_item(),
             sep,
             pystray.MenuItem(
                 "帮助",
                 pystray.Menu(
+                    pystray.MenuItem("检查更新", self.on_check_update),
                     pystray.MenuItem("如何安装 DSH", self.on_install_guide),
                     pystray.MenuItem("访问官方文档", self.on_docs),
                     pystray.MenuItem("打开日志目录", self.on_open_logs),
@@ -431,13 +577,73 @@ class TrayApp:
 
 
 # --------------------------------------------------------------------------
+def _cmd_check_update() -> int:
+    """--check-update 入口：打印更新检测结果。"""
+    cfg = cfgmod.load_config()
+    if cfg is None:
+        print("错误：无有效配置，请先运行配置向导")
+        return 0
+    
+    dsh_type = cfg.get("dshType", "")
+    print(f"安装类型: {dsh_type}")
+    
+    if dsh_type == "pnpm":
+        # 源码安装：走 git 远端判定（spec 故事 27：CLI 也要给出源码判定结论）
+        result = updater.check_for_update(cfg)
+        print("当前版本: 未知（源码安装）")
+        print("最新版本: 未知（对比 git 远端提交）")
+        if result.get("has_update"):
+            print(f"结论: {result.get('reason', '有更新')}")
+        elif result.get("has_update") is False:
+            print("结论: 已是最新（源码与远端一致）")
+        else:
+            print(f"结论: 未知，跳过判定（{result.get('reason', '')}）")
+        return 0
+    
+    if dsh_type == "manual":
+        print("当前版本: 未知")
+        print("最新版本: 未知")
+        print("结论: 未知，跳过判定")
+        return 0
+    
+    if dsh_type not in ("global", "local"):
+        print("当前版本: 未知")
+        print("最新版本: 未知")
+        print(f"结论: 未知安装类型: {dsh_type}")
+        return 0
+    
+    # global/local：走 registry 检测
+    registry = updater._resolve_registry()
+    print(f"registry: {registry}")
+    result = updater.check_for_update(cfg)
+    current = result.get("current_version") or "未知"
+    latest = result.get("latest_version") or "未知"
+    reason = result.get("reason", "")
+    
+    print(f"当前版本: {current}")
+    print(f"最新版本: {latest}")
+    
+    if result.get("has_update"):
+        print(f"结论: 有新版本 → {latest}")
+    else:
+        print(f"结论: {reason}")
+    
+    return 0
+
+
 def main(argv: Optional[list] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    _setup_logging()
-
+    
+    # 诊断入口不需要日志，先处理
     if "--version" in argv:
         print(f"dsh-web-tray {__version__}")
         return 0
+    if "--check-update" in argv:
+        return _cmd_check_update()
+    
+    # 其他入口需要日志
+    _setup_logging()
+
     if "--wizard" in argv:
         import wizard
 

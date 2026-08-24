@@ -94,6 +94,60 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(inv[0], sys.executable)
         self.assertTrue(inv[1].endswith("dsh-web-tray.py"))
 
+    def test_default_config_has_update_keys(self):
+        """default_config 包含更新检测三键（ADR-0005）。"""
+        cfg = cfgmod.default_config()
+        self.assertIn("lastUpdateCheckAt", cfg)
+        self.assertIn("lastNotifiedVersion", cfg)
+        self.assertIn("lastKnownLatestVersion", cfg)
+        self.assertEqual(cfg["lastUpdateCheckAt"], 0)
+        self.assertEqual(cfg["lastNotifiedVersion"], "")
+        self.assertEqual(cfg["lastKnownLatestVersion"], "")
+
+    def test_update_keys_roundtrip(self):
+        """更新检测三键能正确 round-trip。"""
+        cfg = cfgmod.default_config()
+        cfg.update(
+            {
+                "dshType": "global",
+                "dshArgv": ["/usr/bin/dsh", "web"],
+                "lastUpdateCheckAt": 1234567890,
+                "lastNotifiedVersion": "1.2.3",
+                "lastKnownLatestVersion": "1.3.0",
+            }
+        )
+        cfgmod.save_config(cfg)
+        loaded = cfgmod.load_config()
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded["lastUpdateCheckAt"], 1234567890)
+        self.assertEqual(loaded["lastNotifiedVersion"], "1.2.3")
+        self.assertEqual(loaded["lastKnownLatestVersion"], "1.3.0")
+
+    def test_old_config_without_update_keys_valid(self):
+        """旧配置（无更新键）仍有效，缺省值自动填充。"""
+        # 手动创建一个旧格式配置
+        cfgmod.config_path().parent.mkdir(parents=True, exist_ok=True)
+        old_cfg = {
+            "version": 1,
+            "dshType": "global",
+            "dshArgv": ["/usr/bin/dsh", "web"],
+            "dshArgvDisplay": "dsh web",
+            "dshDir": "",
+            "dshPort": 3080,
+            "lastUrl": "",
+            "autostart": False,
+        }
+        import json
+        with open(cfgmod.config_path(), "w", encoding="utf-8") as f:
+            json.dump(old_cfg, f)
+        
+        loaded = cfgmod.load_config()
+        self.assertIsNotNone(loaded)
+        # 新键应有缺省值
+        self.assertEqual(loaded["lastUpdateCheckAt"], 0)
+        self.assertEqual(loaded["lastNotifiedVersion"], "")
+        self.assertEqual(loaded["lastKnownLatestVersion"], "")
+
 
 if __name__ == "__main__":
     unittest.main()
