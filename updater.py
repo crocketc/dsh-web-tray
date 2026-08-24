@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+import ssl
 import subprocess
 import sys
 import threading
@@ -171,6 +172,21 @@ def _resolve_registry() -> str:
     return OFFICIAL_REGISTRY
 
 
+def _ssl_context() -> ssl.SSLContext:
+    """构造带系统 CA 的 SSL 上下文。
+
+    PyInstaller 打包的 Python 找不到 macOS 系统证书存储（/etc/ssl/cert.pem），
+    HTTPS 请求会在证书校验处直接失败（打包版「无法获取最新版本」的根因）；
+    显式把系统证书文件补进信任列表即可修复，且对源码/其他平台无害。
+    """
+    ctx = ssl.create_default_context()
+    try:
+        ctx.load_verify_locations("/etc/ssl/cert.pem")
+    except (OSError, ssl.SSLError):
+        pass  # 非 macOS / 文件缺失时保持默认行为
+    return ctx
+
+
 def fetch_latest_version(registry: str) -> Optional[str]:
     """从 registry 获取 dsh 最新版本号。
 
@@ -187,8 +203,8 @@ def fetch_latest_version(registry: str) -> Optional[str]:
     url = f"{registry}/{encoded_package}/latest"
 
     try:
-        # 连接+读取总超时约 10 秒
-        with urllib.request.urlopen(url, timeout=10) as response:
+        # 连接+读取总超时约 10 秒；显式带系统 CA（打包版 ssl 找不到证书）
+        with urllib.request.urlopen(url, timeout=10, context=_ssl_context()) as response:
             if response.getcode() != 200:
                 return None
             data = json.loads(response.read().decode("utf-8"))

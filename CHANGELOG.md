@@ -3,6 +3,15 @@
 本项目所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循语义化版本（SemVer）。
 
+## [1.6.2] — 2026-08-24
+
+### 修复
+- **打包版永远取不到最新版本**（PyInstaller 打包的 Python 找不到 macOS 系统 CA，
+  HTTPS 证书校验直接失败）：fetch_latest_version 显式加载 /etc/ssl/cert.pem
+- **通知被 macOS 拦截时用户零反馈**：ad-hoc 未签名应用 macOS 直接拒绝通知权限
+  （UNErrorDomain Code=1），现在检查结果同步写入托盘菜单临时反馈行
+  （「🔍 最近检查：…」30 秒自动消失），通知通道尽力而为（UN → osascript 双兜底）
+
 ## [1.6.1] — 2026-08-24
 
 ### 修复

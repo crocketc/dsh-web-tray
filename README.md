@@ -4,7 +4,7 @@
 
 ![托盘右键菜单](docs/images/tray-menu.png)
 
-[![Release](https://img.shields.io/badge/release-v1.6.1-blue)](https://github.com/crocketc/dsh-web-tray/releases/latest)
+[![Release](https://img.shields.io/badge/release-v1.6.2-blue)](https://github.com/crocketc/dsh-web-tray/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey)](https://github.com/crocketc/dsh-web-tray/releases/latest)
 
 ## 它解决什么问题

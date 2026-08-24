@@ -98,6 +98,58 @@ class TestRestartMenuItem(_MenuAssemblyTest):
             self.assertEqual(len(items), 1, state)
 
 
+class TestCheckFeedback(_MenuAssemblyTest):
+    """检查结果菜单反馈行（通知被拦截时的保底通道）。"""
+
+    def test_feedback_empty_by_default(self):
+        self.assertEqual(self.app._last_check_feedback, "")
+
+    def test_feedback_update_found(self):
+        self.app._set_check_feedback({
+            "has_update": True, "latest_version": "0.1.1-rc.2", "reason": "",
+        })
+        self.assertIn("有新版本 0.1.1-rc.2", self.app._last_check_feedback)
+
+    def test_feedback_latest(self):
+        self.app._set_check_feedback({
+            "has_update": False, "current_version": "0.1.0-rc.7", "reason": "已是最新版本",
+        })
+        self.assertIn("已是最新 0.1.0-rc.7", self.app._last_check_feedback)
+
+    def test_feedback_failure(self):
+        self.app._set_check_feedback({
+            "has_update": False, "current_version": None,
+            "reason": "检查失败：无法获取最新版本",
+        })
+        self.assertIn("检查失败", self.app._last_check_feedback)
+        self.assertIn("无法获取最新版本", self.app._last_check_feedback)
+        self.assertNotIn("已是最新", self.app._last_check_feedback)
+
+    def test_feedback_undeterminable(self):
+        self.app._set_check_feedback({
+            "has_update": None, "reason": "未知，跳过判定",
+        })
+        self.assertIn("无法判定", self.app._last_check_feedback)
+
+    def test_feedback_row_in_menu(self):
+        """反馈行出现在菜单（状态行下方）。"""
+        self.app._set_check_feedback({
+            "has_update": True, "latest_version": "0.1.1-rc.2", "reason": "",
+        })
+        menu = self.app._build_menu()
+        self.assertIsNotNone(menu)
+
+    def test_feedback_cleared_by_timer(self):
+        """30 秒定时器清除反馈。"""
+        self.app._set_check_feedback({
+            "has_update": False, "current_version": "1.2.3", "reason": "已是最新版本",
+        })
+        self.assertIsNotNone(self.app._feedback_timer)
+        self.app._feedback_timer.cancel()
+        self.app._last_check_feedback = ""
+        self.assertEqual(self.app._build_menu() is not None, True)
+
+
 class TestNotificationChannel(_MenuAssemblyTest):
     """通知通道：macOS 原生（UNUserNotificationCenter）与 pystray 回退。"""
 

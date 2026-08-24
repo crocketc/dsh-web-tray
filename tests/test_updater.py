@@ -154,6 +154,25 @@ class TestFetchLatestVersion(unittest.TestCase):
             # URL 编码后 @ 变成 %40
             self.assertIn("%40deepseek-ai%2Fdsh", str(call_url))
 
+    def test_ssl_context_passed(self):
+        """HTTPS 请求带系统 CA 的 SSL 上下文（打包版找不到证书的修复）。"""
+        mock_response = mock.Mock()
+        mock_response.read.return_value = b'{"version":"1.2.3"}'
+        mock_response.getcode.return_value = 200
+        mock_response.__enter__ = mock.Mock(return_value=mock_response)
+        mock_response.__exit__ = mock.Mock(return_value=False)
+        fake_ctx = mock.Mock()
+
+        with mock.patch.object(updater, "_ssl_context", return_value=fake_ctx), \
+             mock.patch.object(updater.urllib.request, "urlopen", return_value=mock_response) as mock_open:
+            updater.fetch_latest_version("https://registry.npmmirror.com")
+            self.assertEqual(mock_open.call_args[1]["context"], fake_ctx)
+
+    def test_ssl_context_loads_system_ca(self):
+        """_ssl_context 补入 /etc/ssl/cert.pem（macOS 系统证书）不抛异常。"""
+        ctx = updater._ssl_context()
+        self.assertIsNotNone(ctx)
+
     def test_timeout_returns_none(self):
         """超时返回 None"""
         error = updater.urllib.error.URLError("timeout")

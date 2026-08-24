@@ -39,7 +39,7 @@ import updater
 from dsh_process import DshProcess, port_in_use
 from singleinstance import SingleInstance
 
-__version__ = "1.6.1"
+__version__ = "1.6.2"
 
 APP_NAME = "DSH Web Tray"
 
@@ -92,6 +92,8 @@ class TrayApp:
         self._intentional_stop = False
         self._lifecycle_lock = threading.Lock()
         self.update_mgr: Optional[update_manager.UpdateManager] = None
+        self._last_check_feedback = ""  # 检查结果菜单反馈行（通知被拦截时保底）
+        self._feedback_timer: Optional[threading.Timer] = None
 
     # ------------------------------------------------------------ 状态与图标
     def _set_state(self, state: str, exit_code: Optional[int] = None) -> None:
@@ -366,14 +368,47 @@ class TrayApp:
         
         def worker() -> None:
             try:
-                self.update_mgr.check_now(auto=False)
-                # 结果已通过通知反馈，这里只需刷新菜单
+                result = self.update_mgr.check_now(auto=False)
+                # 通知可能被 macOS 拦截（ad-hoc 应用无通知权限）：
+                # 结果同步写进菜单（临时反馈行），保证用户一定看得到
+                self._set_check_feedback(result)
                 self._refresh_ui()
             except Exception:
                 log.exception("手动检查更新失败")
                 self._notify("检查更新", "检查失败，请查看日志")
         
         threading.Thread(target=worker, daemon=True, name="manual-check-update").start()
+
+    def _set_check_feedback(self, result: dict) -> None:
+        """把检查结果写进菜单临时反馈行（通知被拦截时的保底通道）。
+
+        30 秒后自动清除；再次检查会覆盖。文案与通知保持一致。
+        """
+        if not isinstance(result, dict):
+            self._last_check_feedback = "检查失败"
+        elif result.get("has_update"):
+            latest = result.get("latest_version") or result.get("reason") or "有新版本"
+            self._last_check_feedback = f"🆕 有新版本 {latest}"
+        elif result.get("has_update") is None:
+            self._last_check_feedback = f"无法判定（{result.get('reason', '未知')}）"
+        else:
+            reason = result.get("reason", "")
+            if reason.startswith("检查失败"):
+                detail = reason.split("：", 1)[-1] if "：" in reason else reason
+                self._last_check_feedback = f"❌ 检查失败（{detail}）"
+            elif result.get("current_version"):
+                self._last_check_feedback = f"✓ 已是最新 {result['current_version']}"
+            else:
+                self._last_check_feedback = "✓ 已是最新"
+        
+        # 30 秒后自动清除反馈行
+        if self._feedback_timer is not None:
+            self._feedback_timer.cancel()
+        self._feedback_timer = threading.Timer(
+            30, lambda: (setattr(self, "_last_check_feedback", ""), self._refresh_ui())
+        )
+        self._feedback_timer.daemon = True
+        self._feedback_timer.start()
 
     def on_docs(self, icon=None, item=None) -> None:
         platforms.open_url(detect.DOCS_URL)
@@ -591,7 +626,15 @@ class TrayApp:
 
             def _delivery_handler(error) -> None:  # pragma: no cover
                 if error is not None:
-                    log.warning("通知投递失败：%s", error)
+                    log.warning("通知投递失败：%s，回退 pystray", error)
+                    # ad-hoc 应用 macOS 直接拒绝通知（UNErrorDomain Code=1）：
+                    # 异步投递失败时补一次 pystray（osascript）兜底
+                    icon = self.icon
+                    if icon is not None:
+                        try:
+                            icon.notify(message, title)
+                        except Exception:
+                            pass
 
             center.addNotificationRequest_withCompletionHandler_(
                 request, _delivery_handler
@@ -625,8 +668,17 @@ class TrayApp:
         def autostart_checked(item=None) -> bool:
             return self.autostart_on
 
+        feedback_items = []
+        if self._last_check_feedback:
+            feedback_items = [
+                pystray.MenuItem(
+                    f"🔍 {self._last_check_feedback}", None, enabled=False
+                )
+            ]
+
         return pystray.Menu(
             pystray.MenuItem(lambda item: self._status_text(), None, enabled=False),
+            *feedback_items,
             sep,
             pystray.MenuItem("打开浏览器", self.on_open_browser, enabled=can_open, default=True),
             pystray.MenuItem("重新启动", self.on_restart, enabled=can_restart),
