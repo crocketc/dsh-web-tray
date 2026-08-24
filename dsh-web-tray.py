@@ -38,7 +38,7 @@ import updater
 from dsh_process import DshProcess, port_in_use
 from singleinstance import SingleInstance
 
-__version__ = "1.5.0"
+__version__ = "1.6.0"
 
 APP_NAME = "DSH Web Tray"
 
