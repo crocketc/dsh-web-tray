@@ -244,6 +244,20 @@ class TestManualCheckFeedback(_MenuAssemblyTest):
         menu = self.app._build_menu()
         self.assertIsNotNone(menu)
 
+    def test_refresh_ui_rebuilds_menu(self):
+        """菜单刷新必须重建整棵菜单（v1.6.4 真根因回归）。
+
+        背景：pystray 的 icon.update_menu() 只按 Icon 构造时传入的旧 Menu
+        重绘，动态新增的条目（升级项/检查反馈行/重启项）永远不会出现；
+        必须重新赋值 icon.menu = _build_menu() 才能让新条目进入真实菜单。
+        """
+        self.app.icon = mock.Mock()
+        with mock.patch.object(self.main.sys, "platform", "linux"), \
+                mock.patch.object(self.app, "_build_menu", return_value="NEW_MENU") as bm:
+            self.app._refresh_ui()
+        bm.assert_called_once()
+        self.assertEqual(self.app.icon.menu, "NEW_MENU")
+
 
 class TestNotificationChannel(_MenuAssemblyTest):
     """通知通道：macOS 原生（UNUserNotificationCenter）与 pystray 回退。"""

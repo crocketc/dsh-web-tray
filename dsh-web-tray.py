@@ -39,7 +39,7 @@ import updater
 from dsh_process import DshProcess, port_in_use
 from singleinstance import SingleInstance
 
-__version__ = "1.6.3"
+__version__ = "1.6.4"
 
 APP_NAME = "DSH Web Tray"
 
@@ -133,7 +133,11 @@ class TrayApp:
         except Exception:  # pragma: no cover
             pass
         try:
-            icon.update_menu()
+            # 必须重建整棵菜单，而不是 update_menu()：
+            # pystray 的 update_menu 只是按 icon.menu（Icon 构造时传入的
+            # 旧 Menu 对象）重绘，动态生成的新条目（升级项/检查反馈行/
+            # 重启项）永远不会出现——这正是「检查更新无任何反应」的真根因。
+            icon.menu = self._build_menu()
         except Exception:  # pragma: no cover
             pass
 
