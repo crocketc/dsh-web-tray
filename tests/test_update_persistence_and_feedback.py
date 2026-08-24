@@ -163,6 +163,23 @@ class TestManualCheckFeedback(unittest.TestCase):
         self.assertEqual(len(notifications), 1)
         self.assertIn("当前已是最新版本 1.2.3", notifications[0][1])
 
+    def test_no_update_without_version_no_fake_version(self):
+        """pnpm 已最新（无版本号）时不显示假版本「未知」。"""
+        cfg = cfgmod.default_config()
+        mgr, notifications = _make_mgr(cfg, {
+            "has_update": False,
+            "current_version": None,
+            "latest_version": None,
+            "reason": "已是最新",
+        }, None)
+
+        mgr.check_now(auto=False)
+
+        self.assertEqual(len(notifications), 1)
+        message = notifications[0][1]
+        self.assertIn("当前已是最新", message)
+        self.assertNotIn("未知", message)
+
     def test_unknown_status_auto_check_silent(self):
         """自动检查遇到无法判定保持静默（只记日志，不通知）。"""
         cfg = cfgmod.default_config()

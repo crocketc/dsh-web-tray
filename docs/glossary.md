@@ -11,7 +11,7 @@
 | registry | `_resolve_registry()` | 用户 npm 配置的包仓库地址（本机实测为 npmmirror 国内镜像）；查询/升级版本必须与之一致，回退顺序：npm config → ~/.npmrc → registry.npmjs.org（ADR-0001）。 |
 | 版本查询 | `fetch_latest_version()` | HTTP GET `<registry>/@deepseek-ai%2Fdsh/latest`，stdlib urllib，超时静默放弃。不 shell 出 npm CLI（EPERM 教训，ADR-0001）。 |
 | 当前版本 | `current_version()` | 执行 `dshArgv[0] --version`，输出中首个 semver 匹配；绝对路径执行，不依赖 PATH。 |
-| 源码更新判定 | git `HEAD..origin/HEAD` | 源码安装的“有新版本”= 静默 `git fetch` 后远端分支领先于本地 HEAD 的提交数 > 0（ADR-0003）。 |
+| 源码更新判定 | git `HEAD..origin/main` | 源码安装的“有新版本”= 静默 `git fetch` 后 `HEAD..origin/main` 领先提交数 > 0（ADR-0003）。 |
 | 静默升级执行 | `updater` 执行器 | 托盘后台线程 spawn 升级命令，无任何窗口（Windows CREATE_NO_WINDOW / POSIX 无终端）；不自动加 sudo（ADR-0002 修订版）。 |
 | 升级日志 | logs 目录升级日志文件 | 静默升级 stdout/stderr 全量落盘（含轮转）；失败通知从中取 stderr 尾部摘要（ADR-0002）。 |
 | 手动升级命令 | 完整命令文案 | 失败通知/菜单中给出的完整可粘贴升级命令，供 Linux root 目录等场景自行（必要时加 sudo）执行（ADR-0002）。 |

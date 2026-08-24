@@ -17,9 +17,10 @@ Homebrew/nvm/volta 与 Windows 均不需要。用户明确选择静默：升级�
 
 ## 决策
 
-- 升级 = 托盘后台线程直接 spawn 升级命令：Windows `CREATE_NO_WINDOW`（复用
-  dsh_process 的跨平台启动基建与 Job Object 保护），POSIX 普通无终端启动。
-  **不弹任何窗口，不自动加 sudo。**
+- 升级 = 托盘后台线程直接 spawn 升级命令：Windows `CREATE_NO_WINDOW`，POSIX
+  `start_new_session` 无终端启动。**不弹任何窗口，不自动加 sudo。**
+  （实现说明：升级子进程未绑 Job Object——由执行线程 `wait()` 监管并在约 30 分钟
+  超时后 kill；托盘意外退出时让进行中的升级自然跑完，比强杀更安全。）
 - stdout/stderr 全量写入升级日志（logs 目录下独立文件，含轮转）。
 - 结束后按退出码通知（ADR-0004）：
   - `0` → 「升级完成，建议重启」；

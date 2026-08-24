@@ -1,7 +1,7 @@
 # Spec：dsh 版本更新检测与手动升级（托盘集成）
 
 - 来源：2025-08-24 grill-with-docs 设计访谈 → ADR 0001–0006 / 术语表
-- 状态：待实现（tracker 未配置，暂存本地；就绪后应发布并标 ready-for-agent）
+- 状态：已实现（分支 feature/dsh-update-check；2025-08-24 交付）
 - 修订：2025-08-24 执行方式定稿为**静默升级**（ADR-0002/0004 已同步改写）
 
 ## Problem Statement
@@ -66,14 +66,14 @@ dsh（@deepseek-ai/dsh）迭代很快（当前本机 0.1.0-rc.7，registry lates
   - 当前版本 current_version：执行配置 dshArgv 首元素 --version（绝对路径，不依赖 PATH），输出取首个 semver 匹配；失败返回 None。
   - 源码更新判定：git fetch --quiet（超时保护）后统计远端领先提交数；git 异常/detached HEAD → 未知，视为无更新不提示。
   - 升级命令构造 build_upgrade_command：按安装类型分派——global → npm install -g 包@pin版本；local → 在 dshDir 下 npm install 包@pin版本；pnpm → git pull && pnpm install && pnpm run build（cwd=dshDir）；manual → 无命令，仅打开发布页动作。同时产出完整手动命令文案（失败通知用）。
-  - 静默执行器：托盘后台线程 spawn 升级命令——Windows CREATE_NO_WINDOW（复用 dsh_process 跨平台启动基建与 Job Object 保护），POSIX 无终端启动；stdout/stderr 全量写升级日志（含轮转）；daemon 线程 wait 返回（退出码, stderr 尾部摘要）。不自动加 sudo、不弹任何窗口。
+  - 静默执行器：托盘后台线程 spawn 升级命令——Windows CREATE_NO_WINDOW，POSIX start_new_session 无终端启动（不绑 Job Object：由执行线程 wait() 监管、约 30 分钟超时 kill，托盘意外退出时让升级自然跑完）；stdout/stderr 全量写升级日志（含轮转）；daemon 线程 wait 返回（退出码, stderr 尾部摘要）。不自动加 sudo、不弹任何窗口。
 - **config 扩展**：新增三键 lastUpdateCheckAt（检查冷却时间戳）、lastNotifiedVersion（通知节流）、lastKnownLatestVersion（菜单显示缓存）。default_config 提供缺省值，旧配置无需迁移、_is_valid 不收紧。
 - **CLI 诊断入口 --check-update**：打印当前版本/registry latest/判定结论（含源码安装的 git 判定与“未知”），退出码 0；纯诊断，不影响托盘 UI。不提供 --upgrade 入口（用户已确认）。
 - **TrayApp 接线**：
   - 更新检查调度：daemon 线程，启动延迟约 30 秒首查，此后每 24 小时；手动「检查更新」绕过冷却但仍写检查时间戳。所有网络/子进程失败只记日志。
   - 菜单：顶层动态「🆕 升级到 x.y.z」（manual → 「打开 DSH 发布页」，点击即打开 URL）；升级中置灰「升级中…」；帮助子菜单新增「检查更新」；升级成功且托盘自管进程在跑时出现「重启以应用新版本」（复用现有 restart 动作）。external 态不提供一键重启，通知文案说明需自行重启外部实例。无更新时菜单与现状完全一致。
   - 通知：检测到新版本且 lastNotifiedVersion ≠ 目标版本 → 系统通知一次并记录；手动检查必反馈（有更新 → 提示；无更新 → “已是最新 x.y.z”；失败 → “检查失败”）。
-  - 升级结果：执行器线程直接以退出码回调（无 marker 文件）——0 → 成功通知 + 一键重启项（自管进程在跑时）；非 0 → 失败通知（原因摘要 + 手动命令）+ 保留升级项可重试。升级前删除旧缓存状态；成功后清 lastNotifiedVersion/lastKnownLatestVersion。
+  - 升级结果：执行器线程直接以退出码回调（无 marker 文件）——0 → 成功通知 + 一键重启项（自管进程在跑时）；非 0 → 失败通知（原因摘要 + 手动命令）+ 保留升级项可重试。成功后清 lastNotifiedVersion/lastKnownLatestVersion 并触发重新检查。检查/升级对三键的每次变更均写回磁盘（重启后冷却与节流仍生效）。
   - 升级中置灰防重入；约 30 分钟超时终止子进程并恢复菜单，状态回到“发现新版本”。
 - **无新依赖**：全部用 stdlib（urllib、json、subprocess、threading）。
 - 既有行为零改动：状态机、图标、退出语义、单实例、自启等一律不动。
@@ -105,4 +105,4 @@ dsh（@deepseek-ai/dsh）迭代很快（当前本机 0.1.0-rc.7，registry lates
 - 关键实机教训（ADR-0001 背景）：npm view 可能因 ~/.npm 缓存 root 残留而 EPERM——只读查询也靠不住，这是“查询走 HTTP”的直接证据；本机 registry 实测为 npmmirror 镜像，这是“尊重用户 registry 配置”的直接证据。
 - 静默升级的失败兜底三件套：失败通知（含 stderr 尾部摘要）+ 完整手动命令 + 升级日志入口；Linux root 目录场景用户自行加 sudo 执行手动命令。
 - external 态的一键重启刻意缺席：外部进程不归托盘管（与既有“只管自己启动的进程”原则一致），通知文案需说明。
-- 源码判定的 origin/HEAD 依赖 fetch 成功且默认分支配置正常；异常一律“未知→不提示”，宁可漏报不可误报。
+- 源码判定的 origin/main 依赖 fetch 成功且默认分支配置正常；异常一律“未知→不提示”，宁可漏报不可误报。

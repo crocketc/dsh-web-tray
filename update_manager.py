@@ -214,8 +214,14 @@ class UpdateManager:
                     # 无法判定（源码 fetch 失败 / manual 类型）：如实反馈，不谎称已最新
                     self._notify_fn("检查更新", f"无法判定是否有更新：{reason}")
                 else:
-                    current_version = result.get("current_version") or "未知"
-                    self._notify_fn("检查更新", f"当前已是最新版本 {current_version}")
+                    current_version = result.get("current_version")
+                    if current_version:
+                        self._notify_fn("检查更新", f"当前已是最新版本 {current_version}")
+                    elif reason and reason != "已是最新":
+                        # 源码安装无版本号：不显示假版本，附原因
+                        self._notify_fn("检查更新", f"当前已是最新（{reason}）")
+                    else:
+                        self._notify_fn("检查更新", "当前已是最新")
         
         # 持久化检查时间戳/节流/缓存键（ADR-0005：重启后冷却与节流仍生效）
         self._save()
