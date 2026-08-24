@@ -6,6 +6,7 @@ _build_menu，导致 AttributeError 只在真实托盘里爆发。本文件用 m
 把整条菜单装配链在单测里跑通，堵住这一类缺陷。
 """
 import importlib.util
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -257,6 +258,38 @@ class TestManualCheckFeedback(_MenuAssemblyTest):
             self.app._refresh_ui()
         bm.assert_called_once()
         self.assertEqual(self.app.icon.menu, "NEW_MENU")
+
+
+class TestUpgradeFeedback(_MenuAssemblyTest):
+    """升级结果写菜单反馈行（v1.6.5：通知被拦截时升级失败/成功也可见）。"""
+
+    def _capture_upgrade_callback(self):
+        """触发 on_upgrade 并返回其 on_upgrade_done 回调。"""
+        self.app.cfg["dshType"] = "global"
+        self.app.cfg["lastKnownLatestVersion"] = "0.1.1-rc.2"
+        self.app.state = "running"
+        with mock.patch.object(self.main.updater, "execute_upgrade") as ex:
+            self.app.on_upgrade()
+            deadline = time.time() + 3
+            while not ex.called and time.time() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(ex.called, "execute_upgrade should be called")
+            return ex.call_args[0][3]  # on_upgrade_done
+
+    def test_upgrade_failure_writes_menu_feedback(self):
+        cb = self._capture_upgrade_callback()
+        with mock.patch.object(self.app.update_mgr, "handle_upgrade_result"):
+            cb(1, "npm ERR! code EACCES\nmore details")
+        self.assertIn("升级失败", self.app._last_check_feedback)
+        self.assertIn("npm ERR!", self.app._last_check_feedback)
+        self.app._feedback_timer.cancel()
+
+    def test_upgrade_success_writes_menu_feedback(self):
+        cb = self._capture_upgrade_callback()
+        with mock.patch.object(self.app.update_mgr, "handle_upgrade_result"):
+            cb(0, "")
+        self.assertIn("升级成功", self.app._last_check_feedback)
+        self.app._feedback_timer.cancel()
 
 
 class TestNotificationChannel(_MenuAssemblyTest):

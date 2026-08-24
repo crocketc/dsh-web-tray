@@ -189,6 +189,46 @@ class TestExecuteUpgrade(unittest.TestCase):
             self.assertIn("creationflags", call_kwargs)
             self.assertEqual(call_kwargs["creationflags"], subprocess.CREATE_NO_WINDOW)
 
+    def test_posix_env_uses_build_subprocess_env(self):
+        """升级子进程必须带增强 PATH（macOS GUI PATH 陷阱，v1.6.5 根因）。
+
+        Finder/LaunchAgent 启动的 App PATH 只有系统目录，npm 不可见时
+        Popen 直接 FileNotFoundError——升级执行器必须与 current_version /
+        DshProcess 同款 build_subprocess_env()。
+        """
+        if sys.platform == "win32":
+            self.skipTest("POSIX-specific test")
+
+        tmp = new_test_dir()
+        log_path = tmp / "upgrade.log"
+
+        callback_called = []
+        def on_done(exit_code, stderr_tail):
+            callback_called.append((exit_code, stderr_tail))
+
+        argv = ["/bin/echo", "test"]
+        fake_env = {"PATH": "/opt/homebrew/bin:/usr/bin:/bin"}
+        with mock.patch.object(updater.subprocess, "Popen") as mock_popen, \
+                mock.patch.object(
+                    updater, "build_subprocess_env", return_value=fake_env
+                ) as mock_env:
+            mock_proc = mock.Mock()
+            mock_proc.wait.return_value = 0
+            mock_proc.stdout.__iter__ = mock.Mock(return_value=iter([]))
+            mock_popen.return_value = mock_proc
+
+            updater.execute_upgrade(argv, None, str(log_path), on_done)
+
+            timeout = 3
+            start = time.time()
+            while not mock_popen.called and (time.time() - start) < timeout:
+                time.sleep(0.1)
+
+            self.assertTrue(mock_popen.called, "Popen should be called")
+            mock_env.assert_called_once()
+            call_kwargs = mock_popen.call_args[1]
+            self.assertEqual(call_kwargs["env"], fake_env)
+
     def test_posix_no_terminal(self):
         """POSIX 使用独立进程组（无终端）"""
         if sys.platform == "win32":

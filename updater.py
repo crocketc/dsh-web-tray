@@ -637,6 +637,11 @@ def execute_upgrade(
                 "text": True,
                 "encoding": "utf-8",
                 "errors": "replace",
+                # macOS GUI PATH 陷阱（v1.6.4 实机「点击升级没反应」根因）：
+                # Finder/LaunchAgent 启动的 App PATH 只有系统目录，npm/node
+                # 不可见，Popen 直接 FileNotFoundError。与 current_version /
+                # DshProcess 同款增强 PATH（补 Homebrew/nvm/volta 等目录）。
+                "env": build_subprocess_env(),
             }
             if cwd:
                 kwargs["cwd"] = cwd

@@ -39,7 +39,7 @@ import updater
 from dsh_process import DshProcess, port_in_use
 from singleinstance import SingleInstance
 
-__version__ = "1.6.4"
+__version__ = "1.6.5"
 
 APP_NAME = "DSH Web Tray"
 
@@ -410,23 +410,25 @@ class TrayApp:
         30 秒后自动清除；再次检查会覆盖。文案与通知保持一致。
         """
         if not isinstance(result, dict):
-            self._last_check_feedback = "检查失败"
+            self._set_menu_feedback("检查失败")
         elif result.get("has_update"):
             latest = result.get("latest_version") or result.get("reason") or "有新版本"
-            self._last_check_feedback = f"🆕 有新版本 {latest}"
+            self._set_menu_feedback(f"🆕 有新版本 {latest}")
         elif result.get("has_update") is None:
-            self._last_check_feedback = f"无法判定（{result.get('reason', '未知')}）"
+            self._set_menu_feedback(f"无法判定（{result.get('reason', '未知')}）")
         else:
             reason = result.get("reason", "")
             if reason.startswith("检查失败"):
                 detail = reason.split("：", 1)[-1] if "：" in reason else reason
-                self._last_check_feedback = f"❌ 检查失败（{detail}）"
+                self._set_menu_feedback(f"❌ 检查失败（{detail}）")
             elif result.get("current_version"):
-                self._last_check_feedback = f"✓ 已是最新 {result['current_version']}"
+                self._set_menu_feedback(f"✓ 已是最新 {result['current_version']}")
             else:
-                self._last_check_feedback = "✓ 已是最新"
-        
-        # 30 秒后自动清除反馈行
+                self._set_menu_feedback("✓ 已是最新")
+
+    def _set_menu_feedback(self, text: str) -> None:
+        """写菜单反馈行并安排 30 秒后自动清除（检查/升级结果共用）。"""
+        self._last_check_feedback = text
         if self._feedback_timer is not None:
             self._feedback_timer.cancel()
         self._feedback_timer = threading.Timer(
@@ -544,6 +546,7 @@ class TrayApp:
                             stderr_tail="升级命令构建失败",
                             state=self.state
                         )
+                        self._set_menu_feedback("❌ 升级失败（升级命令构建失败）")
                         return
                     
                     log.info("发起升级：%s", cmd)
@@ -559,6 +562,12 @@ class TrayApp:
                             stderr_tail=stderr_tail,
                             state=self.state
                         )
+                        # 升级结果写进菜单反馈行（macOS 通知常被拦截，保证可见）
+                        if success:
+                            self._set_menu_feedback("✓ 升级成功（可在菜单重启以应用）")
+                        else:
+                            reason = (stderr_tail or "未知错误").strip().replace("\n", " ")[:60]
+                            self._set_menu_feedback(f"❌ 升级失败（{reason}）")
                         # 刷新菜单（可能显示重启项）
                         self._refresh_ui()
                     
@@ -578,6 +587,7 @@ class TrayApp:
                         stderr_tail=f"升级异常: {str(e)}",
                         state=self.state
                     )
+                    self._set_menu_feedback(f"❌ 升级失败（{str(e)[:50]}）")
                     self._refresh_ui()
             
             threading.Thread(target=worker, daemon=True, name="upgrade-executor").start()

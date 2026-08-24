@@ -3,6 +3,17 @@
 本项目所有显著变更记录于此。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循语义化版本（SemVer）。
 
+## [1.6.5] — 2026-08-24
+
+### 修复
+
+- **点击「升级到 …」立即静默失败（实机日志：升级执行异常: [Errno 2] No such file
+  or directory: 'npm'）**：macOS GUI PATH 陷阱——Finder/LaunchAgent 启动的 App
+  PATH 没有 npm/node，升级执行器 execute_upgrade 直接 Popen 失败。修复为与
+  current_version / DshProcess 同款 build_subprocess_env() 增强 PATH，升级可真实执行。
+- **升级失败/成功在通知被拦截时依旧零反馈**：升级结果同步写入菜单反馈行
+  （「❌ 升级失败（原因摘要）」/「✓ 升级成功」），与检查反馈同一 30 秒自动清除机制。
+
 ## [1.6.4] — 2026-08-24
 
 ### 修复
