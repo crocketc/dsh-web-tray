@@ -150,6 +150,101 @@ class TestCheckFeedback(_MenuAssemblyTest):
         self.assertEqual(self.app._build_menu() is not None, True)
 
 
+class TestManualCheckFeedback(_MenuAssemblyTest):
+    """手动「检查更新」点击的即时反馈与结果反馈（v1.6.3 回归）。
+
+    背景：macOS ad-hoc 应用通知被系统拦截（UNErrorDomain Code=1），osascript
+    兜底在 macOS 15+ 也被静默丢弃，点击「检查更新」后用户零反馈。修复后点击
+    必须立即有菜单反馈（正在检查→结果/失败），且失败路径不依赖被丢弃的通知。
+    """
+
+    def _capture_thread(self):
+        """把 threading.Thread 换成记录 target 的假子类（start 不真正启动）。
+
+        Timer 等内部类也经 threading.Thread 全局名构造，因此假类必须继承真实
+        Thread 并正确初始化，否则 Timer.daemon 赋值会抛 RuntimeError。
+        """
+        import threading as _threading
+
+        real_thread = _threading.Thread
+        threads = []
+
+        class FakeThread(real_thread):
+            def __init__(self, *args, **kwargs):
+                if "target" in kwargs:
+                    threads.append(kwargs["target"])
+                # 不用 super()：Timer 等内部类经全局名 Thread 构造（实例是
+                # Timer 而非 FakeThread），super 会因 MRO 不匹配而 TypeError。
+                real_thread.__init__(self, *args, **kwargs)
+
+            def start(self):
+                # 测试中不真正启动线程（worker 由测试同步调用）
+                pass
+
+        patcher = mock.patch.object(self.main.threading, "Thread", FakeThread)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return threads
+
+    def test_click_gives_immediate_feedback(self):
+        """点击后立即写入「正在检查更新…」并启动后台线程。"""
+        threads = self._capture_thread()
+        self.app._refresh_ui = mock.Mock()
+        self.app.on_check_update()
+        self.assertEqual(self.app._last_check_feedback, "正在检查更新…")
+        self.assertTrue(self.app._check_in_progress)
+        self.assertEqual(len(threads), 1)
+
+    def test_worker_writes_result_feedback(self):
+        """检查完成后反馈行显示结果并复位进行中标记。"""
+        threads = self._capture_thread()
+        self.app._refresh_ui = mock.Mock()
+        self.app.update_mgr.check_now.return_value = {
+            "has_update": False,
+            "current_version": "1.2.3",
+            "reason": "已是最新版本",
+        }
+        self.app.on_check_update()
+        threads[0]()  # 同步执行 worker
+        self.assertIn("已是最新 1.2.3", self.app._last_check_feedback)
+        self.assertFalse(self.app._check_in_progress)
+        self.app.update_mgr.check_now.assert_called_once_with(auto=False)
+        self.app._feedback_timer.cancel()
+
+    def test_worker_exception_still_writes_menu_feedback(self):
+        """检查抛异常时菜单反馈行同样写入失败（不依赖可能被丢弃的通知）。"""
+        threads = self._capture_thread()
+        self.app._refresh_ui = mock.Mock()
+        self.app.update_mgr.check_now.side_effect = RuntimeError("boom")
+        self.app.on_check_update()
+        threads[0]()
+        self.assertIn("检查失败", self.app._last_check_feedback)
+        self.assertFalse(self.app._check_in_progress)
+
+    def test_repeated_click_does_not_stack_checks(self):
+        """检查进行中重复点击不叠加并发线程，只刷新进度文案。"""
+        threads = self._capture_thread()
+        self.app._refresh_ui = mock.Mock()
+        self.app.on_check_update()
+        self.app.on_check_update()
+        self.assertEqual(len(threads), 1)
+        self.assertEqual(self.app._last_check_feedback, "正在检查更新…")
+
+    def test_feedback_items_helper_empty_by_default(self):
+        self.assertEqual(self.app._build_check_feedback_items(), [])
+
+    def test_feedback_items_helper_with_feedback(self):
+        self.app._last_check_feedback = "✓ 已是最新 1.2.3"
+        items = self.app._build_check_feedback_items()
+        self.assertEqual(len(items), 1)
+
+    def test_menu_builds_with_progress_feedback(self):
+        """「正在检查更新…」状态下整条菜单（含帮助子菜单）构建成功。"""
+        self.app._last_check_feedback = "正在检查更新…"
+        menu = self.app._build_menu()
+        self.assertIsNotNone(menu)
+
+
 class TestNotificationChannel(_MenuAssemblyTest):
     """通知通道：macOS 原生（UNUserNotificationCenter）与 pystray 回退。"""
 

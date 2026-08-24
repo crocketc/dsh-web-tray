@@ -39,7 +39,7 @@ import updater
 from dsh_process import DshProcess, port_in_use
 from singleinstance import SingleInstance
 
-__version__ = "1.6.2"
+__version__ = "1.6.3"
 
 APP_NAME = "DSH Web Tray"
 
@@ -94,6 +94,7 @@ class TrayApp:
         self.update_mgr: Optional[update_manager.UpdateManager] = None
         self._last_check_feedback = ""  # 检查结果菜单反馈行（通知被拦截时保底）
         self._feedback_timer: Optional[threading.Timer] = None
+        self._check_in_progress = False  # 手动检查进行中（防连点并发）
 
     # ------------------------------------------------------------ 状态与图标
     def _set_state(self, state: str, exit_code: Optional[int] = None) -> None:
@@ -361,22 +362,42 @@ class TrayApp:
         threading.Thread(target=worker, daemon=True).start()
 
     def on_check_update(self, icon=None, item=None) -> None:
-        """手动检查更新（帮助菜单）。"""
+        """手动检查更新（帮助菜单）。
+
+        反馈策略（macOS 通知常被 ad-hoc 应用拦截，通知只是尽力而为）：
+        - 点击后**立即**在菜单里显示「正在检查更新…」，避免毫无反应；
+        - 检查结果同步写入菜单反馈行（主菜单顶部 + 帮助子菜单内），
+          通知被拦截时用户依然看得到结果；
+        - 检查异常时同样把失败写进菜单，不依赖可能被丢弃的通知。
+        """
         if self.update_mgr is None:
             self._notify("检查更新", "更新管理器未初始化")
             return
-        
+
+        # 已在检查中：不重复起线程，只刷新进度文案
+        if self._check_in_progress:
+            self._last_check_feedback = "正在检查更新…"
+            self._refresh_ui()
+            return
+
+        self._check_in_progress = True
+        self._last_check_feedback = "正在检查更新…"
+        self._refresh_ui()
+
         def worker() -> None:
             try:
                 result = self.update_mgr.check_now(auto=False)
                 # 通知可能被 macOS 拦截（ad-hoc 应用无通知权限）：
                 # 结果同步写进菜单（临时反馈行），保证用户一定看得到
                 self._set_check_feedback(result)
-                self._refresh_ui()
             except Exception:
                 log.exception("手动检查更新失败")
+                self._last_check_feedback = "❌ 检查失败（详见日志）"
                 self._notify("检查更新", "检查失败，请查看日志")
-        
+            finally:
+                self._check_in_progress = False
+                self._refresh_ui()
+
         threading.Thread(target=worker, daemon=True, name="manual-check-update").start()
 
     def _set_check_feedback(self, result: dict) -> None:
@@ -409,6 +430,22 @@ class TrayApp:
         )
         self._feedback_timer.daemon = True
         self._feedback_timer.start()
+
+    def _build_check_feedback_items(self) -> list:
+        """构建检查反馈菜单项（禁用状态，仅展示）。
+
+        出现在两处：主菜单顶部（状态行下方）+ 帮助子菜单「检查更新」正下方
+        （用户点击之处），保证通知被拦截时结果依然可见。
+        """
+        import pystray
+
+        if not self._last_check_feedback:
+            return []
+        return [
+            pystray.MenuItem(
+                f"🔍 {self._last_check_feedback}", None, enabled=False
+            )
+        ]
 
     def on_docs(self, icon=None, item=None) -> None:
         platforms.open_url(detect.DOCS_URL)
@@ -668,13 +705,7 @@ class TrayApp:
         def autostart_checked(item=None) -> bool:
             return self.autostart_on
 
-        feedback_items = []
-        if self._last_check_feedback:
-            feedback_items = [
-                pystray.MenuItem(
-                    f"🔍 {self._last_check_feedback}", None, enabled=False
-                )
-            ]
+        feedback_items = self._build_check_feedback_items()
 
         return pystray.Menu(
             pystray.MenuItem(lambda item: self._status_text(), None, enabled=False),
@@ -694,6 +725,8 @@ class TrayApp:
                 "帮助",
                 pystray.Menu(
                     pystray.MenuItem("检查更新", self.on_check_update),
+                    # 检查结果反馈行：紧跟「检查更新」，用户点击之处即可见
+                    *self._build_check_feedback_items(),
                     pystray.MenuItem("如何安装 DSH", self.on_install_guide),
                     pystray.MenuItem("访问官方文档", self.on_docs),
                     pystray.MenuItem("打开日志目录", self.on_open_logs),
