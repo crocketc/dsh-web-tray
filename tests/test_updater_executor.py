@@ -22,8 +22,11 @@ class TestExecuteUpgrade(unittest.TestCase):
         def on_done(exit_code, stderr_tail):
             callback_called.append((exit_code, stderr_tail))
         
-        # 用 /bin/echo 模拟成功命令（stdlib only）
-        argv = ["/bin/echo", "upgrade successful"]
+        # 模拟成功命令（跨平台，stdlib only）
+        if sys.platform != "win32":
+            argv = ["/bin/echo", "upgrade successful"]
+        else:
+            argv = ["cmd", "/c", "echo", "upgrade successful"]
         updater.execute_upgrade(argv, None, str(log_path), on_done)
         
         # 等待回调
@@ -104,7 +107,10 @@ class TestExecuteUpgrade(unittest.TestCase):
         def on_done(exit_code, stderr_tail):
             callback_called.append((exit_code, stderr_tail))
         
-        argv = ["/bin/echo", "new log"]
+        if sys.platform != "win32":
+            argv = ["/bin/echo", "new log"]
+        else:
+            argv = ["cmd", "/c", "echo", "new log"]
         updater.execute_upgrade(argv, None, str(log_path), on_done)
         
         timeout = 5
