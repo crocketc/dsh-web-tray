@@ -296,8 +296,9 @@ class TestCheckForUpdate(unittest.TestCase):
         cfg = {
             "dshType": "local",
             "dshArgv": ["npx", "@deepseek-ai/dsh", "web"],
+            "dshDir": "/home/user/my-project",
         }
-        with mock.patch.object(updater, "current_version", return_value="1.0.0"), \
+        with mock.patch.object(updater, "local_installed_version", return_value="1.0.0"), \
              mock.patch.object(updater, "fetch_latest_version", return_value="1.1.0"):
             result = updater.check_for_update(cfg)
             self.assertTrue(result["has_update"])

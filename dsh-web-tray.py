@@ -391,10 +391,12 @@ class TrayApp:
             return items
         
         # 构造虚拟检查结果（用于菜单显示）
+        # 源码安装缓存的是 reason 文案（含落后提交数），透传给菜单构造器
+        reason = latest_version if "落后" in latest_version else ""
         check_result = {
             "has_update": True,
             "latest_version": latest_version,
-            "reason": "",
+            "reason": reason,
         }
         
         # 构建升级菜单项
@@ -585,7 +587,20 @@ def _cmd_check_update() -> int:
     dsh_type = cfg.get("dshType", "")
     print(f"安装类型: {dsh_type}")
     
-    if dsh_type in ("pnpm", "manual"):
+    if dsh_type == "pnpm":
+        # 源码安装：走 git 远端判定（spec 故事 27：CLI 也要给出源码判定结论）
+        result = updater.check_for_update(cfg)
+        print("当前版本: 未知（源码安装）")
+        print("最新版本: 未知（对比 git 远端提交）")
+        if result.get("has_update"):
+            print(f"结论: {result.get('reason', '有更新')}")
+        elif result.get("has_update") is False:
+            print("结论: 已是最新（源码与远端一致）")
+        else:
+            print(f"结论: 未知，跳过判定（{result.get('reason', '')}）")
+        return 0
+    
+    if dsh_type == "manual":
         print("当前版本: 未知")
         print("最新版本: 未知")
         print("结论: 未知，跳过判定")

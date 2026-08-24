@@ -319,6 +319,29 @@ def _fetch_git_remote(repo_path: str, remote_ref: str = "origin/main") -> Dict[s
         return result
 
 
+def local_installed_version(dsh_dir: str) -> Optional[str]:
+    """读取本地安装（node_modules）的已装 dsh 版本号。
+
+    Args:
+        dsh_dir: 含 node_modules 的基准目录（配置 dshDir，local 安装时向导保存）
+
+    Returns:
+        版本串，失败返回 None
+
+    local 类型的 dshArgv[0] 是 npx（`npx --version` 给出的是 npm 版本），
+    因此本地安装一律读 node_modules/@deepseek-ai/dsh/package.json。
+    """
+    if not dsh_dir:
+        return None
+    pkg_json = Path(dsh_dir) / "node_modules" / DSH_NPM_PACKAGE / "package.json"
+    try:
+        data = json.loads(pkg_json.read_text(encoding="utf-8"))
+        version = data.get("version")
+        return version if isinstance(version, str) and version else None
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+
+
 def check_for_update(cfg: Dict[str, Any]) -> Dict[str, Any]:
     """检查是否有新版本可更新。
 
@@ -398,7 +421,11 @@ def check_for_update(cfg: Dict[str, Any]) -> Dict[str, Any]:
 
     # 获取当前版本
     dsh_argv = cfg.get("dshArgv", [])
-    current = current_version(dsh_argv)
+    if dsh_type == "local":
+        # local：dshArgv[0] 是 npx，--version 给的是 npm 版本 → 读包描述文件
+        current = local_installed_version(cfg.get("dshDir", ""))
+    else:
+        current = current_version(dsh_argv)
     if current is None:
         return {
             "current_version": None,

@@ -141,8 +141,8 @@ class TestUpgradeResultHandling(unittest.TestCase):
         recheck_called = []
         
         with mock.patch.object(self.mgr, 'check_now') as mock_check:
-            def side_effect(auto):
-                recheck_called.append(auto)
+            def side_effect(auto, force=False):
+                recheck_called.append((auto, force))
                 return {"has_update": False, "reason": "已是最新"}
             mock_check.side_effect = side_effect
             
@@ -150,8 +150,8 @@ class TestUpgradeResultHandling(unittest.TestCase):
             
             # Should trigger a re-check
             self.assertTrue(mock_check.called)
-            # Should be auto check (not manual)
-            self.assertEqual(recheck_called[0], True)
+            # Should be auto check with force (bypass 24h cooldown, silent semantics)
+            self.assertEqual(recheck_called[0], (True, True))
 
 
 class TestRestartMenuItem(unittest.TestCase):

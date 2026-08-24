@@ -161,16 +161,17 @@ class UpdateManager:
         except Exception:
             log.exception("保存更新状态到配置失败")
 
-    def check_now(self, auto: bool = True) -> Dict[str, Any]:
+    def check_now(self, auto: bool = True, force: bool = False) -> Dict[str, Any]:
         """立即执行更新检查。
 
         Args:
             auto: 是否为自动检查
+            force: 强制绕过 24h 冷却（升级后确认新版本用；仍保持 auto 的静默语义）
 
         Returns:
             检查结果字典
         """
-        if not _should_check_for_update(self.cfg, auto):
+        if not force and not _should_check_for_update(self.cfg, auto):
             log.debug("跳过更新检查（冷却中或自动检查已冷却）")
             return {"has_update": False, "reason": "冷却中"}
         
@@ -183,11 +184,14 @@ class UpdateManager:
         # 处理检查结果
         has_update = result.get("has_update", False)
         if has_update:
-            latest_version = result.get("latest_version") or "unknown"
+            latest_version = result.get("latest_version") or ""
+            # 节流/缓存键：npm 用版本号；源码安装用 reason（含落后提交数，
+            # 计数变化可再次通知），避免恒为 unknown 导致源码用户只通知一次
+            state_key = latest_version or result.get("reason") or "unknown"
             
             # 通知节流
-            if _should_notify_update(self.cfg, latest_version):
-                if result.get("latest_version"):
+            if _should_notify_update(self.cfg, state_key):
+                if latest_version:
                     self._notify_fn(
                         "发现新版本",
                         f"DSH 有新版本可用：{latest_version}"
@@ -198,12 +202,12 @@ class UpdateManager:
                         "发现新版本",
                         f"DSH 源码有更新：{result.get('reason') or '远端有新提交'}"
                     )
-                _record_notified_version(self.cfg, latest_version)
+                _record_notified_version(self.cfg, state_key)
             
-            # 缓存最新版本
-            _cache_latest_version(self.cfg, latest_version)
+            # 缓存最新版本（菜单显示用；源码安装缓存 reason 供菜单取落后数）
+            _cache_latest_version(self.cfg, state_key)
             
-            log.info("发现新版本：%s", latest_version)
+            log.info("发现新版本：%s", state_key)
         else:
             reason = result.get("reason", "未知")
             log.info("无更新：%s", reason)
@@ -342,7 +346,9 @@ class UpdateManager:
         def recheck_worker():
             try:
                 log.info("触发升级后版本重新检查")
-                self.check_now(auto=True)
+                # force=True：绕过 24h 冷却（升级前的检查刚写过时间戳），
+                # 保持自动检查的静默语义（成功即静默刷新缓存，失败只记日志）
+                self.check_now(auto=True, force=True)
             except Exception:
                 log.exception("升级后版本重新检查失败")
         
@@ -350,29 +356,17 @@ class UpdateManager:
         thread.start()
     
     def _get_manual_command(self) -> str:
-        """获取手动升级命令文案（用于失败通知）。"""
+        """获取手动升级命令文案（用于失败通知）。
+
+        委托 updater.build_upgrade_command，保证文案与实际升级命令同源，
+        不在此重复维护一份命令模板。
+        """
+        import updater
         
-        dsh_type = self.cfg.get("dshType", "")
-        latest_version = self.cfg.get("lastKnownLatestVersion", "latest")
-        
-        if dsh_type == "global":
-            return f"npm install -g @deepseek-ai/dsh@{latest_version}"
-        elif dsh_type == "local":
-            dsh_dir = self.cfg.get("dshDir", "")
-            if dsh_dir:
-                return f"cd {dsh_dir} && npm install @deepseek-ai/dsh@{latest_version}"
-            else:
-                return f"npm install @deepseek-ai/dsh@{latest_version}"
-        elif dsh_type == "pnpm":
-            dsh_dir = self.cfg.get("dshDir", "")
-            if dsh_dir:
-                return f"cd {dsh_dir} && git pull && pnpm install && pnpm run build"
-            else:
-                return "git pull && pnpm install && pnpm run build"
-        elif dsh_type == "manual":
-            return "请手动升级：访问 https://github.com/deepseek-ai/dsh/releases"
-        else:
-            return f"未知安装类型：{dsh_type}"
+        cached = self.cfg.get("lastKnownLatestVersion", "")
+        # 源码安装缓存的是 reason 文案，不含可 pin 的版本号
+        target = cached if cached and "落后" not in cached else "latest"
+        return updater.build_upgrade_command(self.cfg, target).get("manual_text", "")
 
 
 def build_restart_menu_item(state: str, restart_callback) -> Any:

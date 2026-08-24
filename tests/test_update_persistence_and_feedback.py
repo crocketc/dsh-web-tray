@@ -215,9 +215,26 @@ class TestPnpmUpdateNotificationText(unittest.TestCase):
         self.assertEqual(title, "发现新版本")
         self.assertIn("落后 3 提交", message)
         self.assertNotIn("unknown", message)
-        # 缓存与节流键仍写入（菜单升级项依赖 lastKnownLatestVersion）
-        self.assertEqual(cfg["lastKnownLatestVersion"], "unknown")
-        self.assertEqual(cfg["lastNotifiedVersion"], "unknown")
+        # 节流/缓存键 = reason（含落后数）：计数变化可再次通知、菜单可显示落后数
+        self.assertEqual(cfg["lastKnownLatestVersion"], "有更新（落后 3 提交）")
+        self.assertEqual(cfg["lastNotifiedVersion"], "有更新（落后 3 提交）")
+
+    def test_pnpm_throttle_differentiates_behind_count(self):
+        """落后提交数变化应当再次通知（不是一生只通知一次）。"""
+        cfg = cfgmod.default_config()
+        cfg["lastNotifiedVersion"] = "有更新（落后 3 提交）"
+        mgr, notifications = _make_mgr(cfg, {
+            "has_update": True,
+            "current_version": None,
+            "latest_version": None,
+            "behind_count": 5,
+            "reason": "有更新（落后 5 提交）",
+        }, None)
+
+        mgr.check_now(auto=True)
+
+        self.assertEqual(len(notifications), 1)
+        self.assertIn("落后 5 提交", notifications[0][1])
 
     def test_npm_notification_uses_version(self):
         cfg = cfgmod.default_config()
@@ -264,6 +281,185 @@ class TestCliCheckUpdateRegistryLine(unittest.TestCase):
         out = buf.getvalue()
         self.assertIn("registry: https://registry.example.com", out)
         self.assertIn("结论:", out)
+
+    def test_pnpm_git_determination_printed(self):
+        """CLI 对 pnpm 走 git 判定并打印落后提交数（spec 故事 27）。"""
+        main_mod = _load_main_module()
+        cfg = cfgmod.default_config()
+        cfg["dshType"] = "pnpm"
+        cfg["dshDir"] = "/fake/harness"
+
+        with mock.patch.object(
+            main_mod.cfgmod, "load_config", return_value=cfg
+        ), mock.patch.object(
+            main_mod.updater, "check_for_update",
+            return_value={
+                "has_update": True,
+                "current_version": None,
+                "latest_version": None,
+                "behind_count": 4,
+                "reason": "有更新（落后 4 提交）",
+            },
+        ) as mock_check:
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = main_mod._cmd_check_update()
+
+        self.assertEqual(rc, 0)
+        out = buf.getvalue()
+        self.assertIn("落后 4 提交", out)
+        mock_check.assert_called_once()
+
+    def test_pnpm_git_unknown_printed(self):
+        """CLI 对 pnpm git 判定失败时如实打印未知与原因。"""
+        main_mod = _load_main_module()
+        cfg = cfgmod.default_config()
+        cfg["dshType"] = "pnpm"
+        cfg["dshDir"] = "/fake/harness"
+
+        with mock.patch.object(
+            main_mod.cfgmod, "load_config", return_value=cfg
+        ), mock.patch.object(
+            main_mod.updater, "check_for_update",
+            return_value={
+                "has_update": None,
+                "current_version": None,
+                "latest_version": None,
+                "behind_count": 0,
+                "reason": "git fetch timeout",
+            },
+        ):
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                rc = main_mod._cmd_check_update()
+
+        self.assertEqual(rc, 0)
+        self.assertIn("未知，跳过判定", buf.getvalue())
+        self.assertIn("git fetch timeout", buf.getvalue())
+
+
+class TestLocalInstalledVersion(unittest.TestCase):
+    """local（npx 本地）安装读 node_modules 包描述取版本（S1 修复）。"""
+
+    def test_reads_package_json_version(self):
+        import updater
+        from tests import new_test_dir
+
+        tmp = new_test_dir()
+        pkg_dir = tmp / "node_modules" / "@deepseek-ai" / "dsh"
+        pkg_dir.mkdir(parents=True)
+        (pkg_dir / "package.json").write_text(
+            '{"name": "@deepseek-ai/dsh", "version": "0.1.1-rc.2"}',
+            encoding="utf-8",
+        )
+
+        version = updater.local_installed_version(str(tmp))
+        self.assertEqual(version, "0.1.1-rc.2")
+
+    def test_missing_dir_returns_none(self):
+        import updater
+
+        self.assertIsNone(updater.local_installed_version(""))
+        self.assertIsNone(updater.local_installed_version("/nonexistent/path"))
+
+    def test_bad_json_returns_none(self):
+        import updater
+        from tests import new_test_dir
+
+        tmp = new_test_dir()
+        pkg_dir = tmp / "node_modules" / "@deepseek-ai" / "dsh"
+        pkg_dir.mkdir(parents=True)
+        (pkg_dir / "package.json").write_text("not json", encoding="utf-8")
+
+        self.assertIsNone(updater.local_installed_version(str(tmp)))
+
+    def test_check_for_update_local_uses_package_json(self):
+        """local 类型检测用包描述版本，不执行 npx --version。"""
+        import updater
+        from tests import new_test_dir
+
+        tmp = new_test_dir()
+        pkg_dir = tmp / "node_modules" / "@deepseek-ai" / "dsh"
+        pkg_dir.mkdir(parents=True)
+        (pkg_dir / "package.json").write_text(
+            '{"version": "0.1.0"}', encoding="utf-8"
+        )
+        cfg = {
+            "dshType": "local",
+            "dshArgv": ["/usr/local/bin/npx", "@deepseek-ai/dsh", "web"],
+            "dshDir": str(tmp),
+        }
+
+        with mock.patch.object(
+            updater, "fetch_latest_version", return_value="0.1.1"
+        ), mock.patch.object(
+            updater, "current_version"
+        ) as mock_cv:
+            result = updater.check_for_update(cfg)
+
+        self.assertTrue(result["has_update"])
+        self.assertEqual(result["current_version"], "0.1.0")
+        self.assertEqual(result["latest_version"], "0.1.1")
+        # 绝不能走 npx --version（那是 npm 的版本号）
+        mock_cv.assert_not_called()
+
+
+class TestManualCommandDelegation(unittest.TestCase):
+    """失败通知的手动命令与 build_upgrade_command 同源（S6 去重）。"""
+
+    def test_manual_command_matches_builder(self):
+        import updater
+
+        cfg = cfgmod.default_config()
+        cfg["dshType"] = "global"
+        cfg["lastKnownLatestVersion"] = "1.2.4"
+        mgr = update_manager.UpdateManager(cfg, lambda c: {}, lambda t, m: None)
+
+        expected = updater.build_upgrade_command(cfg, "1.2.4")["manual_text"]
+        self.assertEqual(mgr._get_manual_command(), expected)
+        self.assertIn("@deepseek-ai/dsh@1.2.4", expected)
+
+    def test_pnpm_cached_reason_falls_back_to_latest(self):
+        import updater
+
+        cfg = cfgmod.default_config()
+        cfg["dshType"] = "pnpm"
+        cfg["dshDir"] = "/fake/harness"
+        cfg["lastKnownLatestVersion"] = "有更新（落后 3 提交）"
+        mgr = update_manager.UpdateManager(cfg, lambda c: {}, lambda t, m: None)
+
+        expected = updater.build_upgrade_command(cfg, "latest")["manual_text"]
+        self.assertEqual(mgr._get_manual_command(), expected)
+
+
+class TestPostUpgradeRecheckBypassesCooldown(unittest.TestCase):
+    """升级成功后的重新检查绕过 24h 冷却（S4 修复），保持静默语义。"""
+
+    def test_recheck_forces_and_stays_auto(self):
+        cfg = cfgmod.default_config()
+        mgr = update_manager.UpdateManager(cfg, lambda c: {}, lambda t, m: None)
+
+        with mock.patch.object(mgr, "check_now") as mock_check:
+            mgr.handle_upgrade_result(success=True, stderr_tail="", state="running")
+
+        mock_check.assert_called_once_with(auto=True, force=True)
+
+    def test_force_bypasses_cooldown(self):
+        """force=True 时即使刚检查过也执行检查。"""
+        cfg = cfgmod.default_config()
+        cfg["lastUpdateCheckAt"] = int(__import__("time").time())  # 刚检查过
+        mgr, notifications = _make_mgr(cfg, {
+            "has_update": False,
+            "current_version": "1.2.3",
+            "latest_version": None,
+            "reason": "已是最新版本",
+        }, None)
+
+        result = mgr.check_now(auto=True, force=True)
+
+        self.assertNotEqual(result.get("reason"), "冷却中")
+        # auto 语义：无更新不通知
+        self.assertEqual(len(notifications), 0)
 
 
 if __name__ == "__main__":

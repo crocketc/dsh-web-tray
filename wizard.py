@@ -389,6 +389,10 @@ class WizardApp:
                 "dshArgvDisplay": display,
                 "dshDir": ddir,
                 "dshPort": port,
+                # 安装类型/路径可能已变：旧更新缓存（版本号/落后数）失效，重置
+                "lastUpdateCheckAt": 0,
+                "lastNotifiedVersion": "",
+                "lastKnownLatestVersion": "",
             }
         )
         cfgmod.save_config(cfg)
