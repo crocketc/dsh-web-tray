@@ -14,6 +14,7 @@
 - 诊断入口：`dsh-web-tray.py --check-update` 打印安装类型/registry/当前版本/最新版本/结论（源码安装含 git 判定），排查更新提示问题无需翻日志
 
 ### 修复
+- **v1.6.0 首发包启动即退出**：菜单装配引用了未实现的 `_build_restart_menu_item`，托盘一进菜单构建即 AttributeError 退出——已实现该方法并新增整条菜单装配链回归测试（tests/test_tray_menu_assembly.py，源码实跑 + 打包存活探测双重验证后重新发布制品）
 - 更新状态三键（lastUpdateCheckAt/lastNotifiedVersion/lastKnownLatestVersion）此前仅存内存，重启后冷却与节流失效——现随检查/升级落盘
 - 本地（npx）安装当前版本此前误取 npx 自身版本号，导致永远判"已是最新"——改读 node_modules 包描述
 - 源码安装通知节流键此前恒为 unknown，导致一生只通知一次——改按落后提交数区分

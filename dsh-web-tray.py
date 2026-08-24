@@ -413,6 +413,28 @@ class TrayApp:
         
         return items
 
+    def _build_restart_menu_item(self) -> list:
+        """「重启以应用新版本」菜单项（票 05 / ADR-0004）。
+
+        显示条件：升级成功标记（handle_upgrade_result 写入）+ 托盘自管进程
+        在跑（external/stopped 等不显示）；点击才重启，绝不自动；
+        点击后清除标记（下次菜单构建即隐藏）并复用既有 restart 动作。
+        """
+        if self.cfg is None:
+            return []
+        if not self.cfg.get("_showRestartAfterUpgrade"):
+            return []
+        if self.state not in ("running", "starting"):
+            return []
+
+        def on_restart_apply(icon=None, item=None) -> None:
+            self.cfg.pop("_showRestartAfterUpgrade", None)
+            self.restart_dsh()
+            self._refresh_ui()
+
+        item = update_manager.build_restart_menu_item(self.state, on_restart_apply)
+        return [item] if item is not None else []
+
     def on_upgrade(self, icon=None, item=None) -> None:
         """处理升级菜单点击（票 05：接升级结果闭环）。"""
         if self.update_mgr is None or self.cfg is None:

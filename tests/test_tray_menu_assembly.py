@@ -1,0 +1,126 @@
+"""Tray menu assembly regression tests.
+
+背景（v1.6.0 打包版启动即退的根因）：_build_menu 引用了 TrayApp 上不存在的方法，
+GUI 装配路径是 spec 的第 4 测试缝（不自动化、实机人工验证），单元测试从未走过
+_build_menu，导致 AttributeError 只在真实托盘里爆发。本文件用 mock 的 pystray
+把整条菜单装配链在单测里跑通，堵住这一类缺陷。
+"""
+import importlib.util
+import unittest
+from pathlib import Path
+from unittest import mock
+
+import config as cfgmod
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _load_main_module():
+    spec = importlib.util.spec_from_file_location(
+        "dsh_web_tray_main", _REPO_ROOT / "dsh-web-tray.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class _MenuAssemblyTest(unittest.TestCase):
+    """公共脚手架：mock pystray + 构造 TrayApp（不进 GUI 主循环）。"""
+
+    def setUp(self):
+        self.pystray_patcher = mock.patch.dict(
+            "sys.modules", {"pystray": mock.MagicMock()}
+        )
+        self.pystray_patcher.start()
+        self.main = _load_main_module()
+        with mock.patch.object(
+            self.main.platforms, "is_autostart_enabled", return_value=False
+        ):
+            self.app = self.main.TrayApp()
+        self.app.cfg = cfgmod.default_config()
+        self.app.update_mgr = mock.MagicMock()
+        self.app.update_mgr.is_upgrade_in_progress.return_value = False
+
+    def tearDown(self):
+        self.pystray_patcher.stop()
+
+
+class TestFullMenuAssembly(_MenuAssemblyTest):
+    """整条 _build_menu 装配链不得抛异常（v1.6.0 打包版回归）。"""
+
+    def test_menu_builds_in_plain_state(self):
+        """无更新、无升级标记时整条菜单构建成功。"""
+        menu = self.app._build_menu()
+        self.assertIsNotNone(menu)
+
+    def test_menu_builds_with_upgrade_pending(self):
+        """有缓存升级信息 + 升级成功标记时整条菜单构建成功。"""
+        self.app.cfg["lastKnownLatestVersion"] = "1.2.4"
+        self.app.cfg["_showRestartAfterUpgrade"] = True
+        self.app.state = "running"
+        menu = self.app._build_menu()
+        self.assertIsNotNone(menu)
+
+    def test_menu_builds_while_upgrading(self):
+        """升级进行中（置灰态）整条菜单构建成功。"""
+        self.app.cfg["lastKnownLatestVersion"] = "1.2.4"
+        self.app.update_mgr.is_upgrade_in_progress.return_value = True
+        menu = self.app._build_menu()
+        self.assertIsNotNone(menu)
+
+    def test_menu_builds_external_state(self):
+        """external 态整条菜单构建成功。"""
+        self.app.state = "external"
+        menu = self.app._build_menu()
+        self.assertIsNotNone(menu)
+
+
+class TestRestartMenuItem(_MenuAssemblyTest):
+    """「重启以应用新版本」菜单项的显示条件与点击行为（ADR-0004）。"""
+
+    def test_hidden_without_upgrade_flag(self):
+        """默认（未升级）不显示。"""
+        self.assertEqual(self.app._build_restart_menu_item(), [])
+
+    def test_hidden_when_flag_but_not_self_managed(self):
+        """external/stopped 态即使有标记也不显示。"""
+        self.app.cfg["_showRestartAfterUpgrade"] = True
+        for state in ("external", "stopped", "crashed", "start_failed"):
+            self.app.state = state
+            self.assertEqual(self.app._build_restart_menu_item(), [], state)
+
+    def test_shown_after_upgrade_success_running(self):
+        """升级成功 + running/starting 时显示。"""
+        self.app.cfg["_showRestartAfterUpgrade"] = True
+        for state in ("running", "starting"):
+            self.app.state = state
+            items = self.app._build_restart_menu_item()
+            self.assertEqual(len(items), 1, state)
+
+    def test_click_clears_flag_and_restarts(self):
+        """点击后：清标记、复用 restart 动作、刷新菜单。"""
+        self.app.cfg["_showRestartAfterUpgrade"] = True
+        self.app.state = "running"
+
+        sentinel_item = mock.sentinel.item
+        with mock.patch.object(
+            self.main.update_manager, "build_restart_menu_item",
+            return_value=sentinel_item,
+        ) as builder:
+            items = self.app._build_restart_menu_item()
+            self.assertEqual(items, [sentinel_item])
+            callback = builder.call_args[0][1]
+
+        with mock.patch.object(self.app, "restart_dsh") as mock_restart, \
+                mock.patch.object(self.app, "_refresh_ui") as mock_refresh:
+            callback()
+
+        mock_restart.assert_called_once()
+        mock_refresh.assert_called_once()
+        self.assertNotIn("_showRestartAfterUpgrade", self.app.cfg)
+        # 清标记后菜单项消失
+        self.assertEqual(self.app._build_restart_menu_item(), [])
+
+
+if __name__ == "__main__":
+    unittest.main()
