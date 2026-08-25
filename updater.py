@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import ssl
 import subprocess
 import sys
@@ -653,8 +654,19 @@ def execute_upgrade(
                 # DshProcess 同款增强 PATH（补 Homebrew/nvm/volta 等目录）。
                 kwargs["env"] = build_subprocess_env()
 
+            # Windows：解析命令绝对路径（避免 WinError 2 系统找不到指定的文件）
+            # 不使用 build_subprocess_env 动态修改 PATH（避免 Defender 误报）
+            final_argv = argv
+            if IS_WINDOWS and argv and argv[0]:
+                cmd_path = argv[0]
+                # 如果不是绝对路径，尝试解析
+                if not Path(cmd_path).is_absolute():
+                    resolved = shutil.which(cmd_path)
+                    if resolved:
+                        final_argv = [resolved] + argv[1:]
+
             # 启动子进程
-            proc = subprocess.Popen(argv, **kwargs)
+            proc = subprocess.Popen(final_argv, **kwargs)
 
             # 写日志（参考 dsh_process._drain）
             log_file = None
