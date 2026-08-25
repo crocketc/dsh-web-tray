@@ -1,4 +1,5 @@
 """updater 模块测试：版本比较、registry 解析、版本查询、当前版本获取。"""
+import sys
 import unittest
 import subprocess
 from unittest import mock
@@ -254,11 +255,13 @@ class TestCurrentVersion(unittest.TestCase):
             version = updater.current_version(["/usr/bin/dsh", "--version"])
             self.assertIsNone(version)
 
+    @unittest.skipIf(sys.platform == "win32", "POSIX-only test: build_subprocess_env only used on macOS/Linux")
     def test_env_uses_build_subprocess_env(self):
         """子进程环境用增强 PATH（macOS GUI PATH 陷阱：node shebang 需解释器）。"""
         fake_env = {"PATH": "/opt/homebrew/bin:/usr/bin:/bin"}
         with mock.patch.object(updater, "build_subprocess_env", return_value=fake_env) as mock_env, \
-             mock.patch.object(updater.subprocess, "run") as mock_run:
+             mock.patch.object(updater.subprocess, "run") as mock_run, \
+             mock.patch.object(updater.sys, "platform", "darwin"):
             mock_run.return_value = mock.Mock(
                 stdout="dsh 0.1.0-rc.7\n", returncode=0
             )

@@ -238,12 +238,13 @@ def current_version(dsh_argv: list[str]) -> Optional[str]:
             "capture_output": True,
             "text": True,
             "timeout": 10,
-            # macOS GUI 应用 PATH 受限：补常见工具目录（dsh_process 同款对策）
-            "env": build_subprocess_env(),
         }
         # Windows：无窗口启动
         if sys.platform == "win32":
             kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        else:
+            # macOS GUI 应用 PATH 受限：补常见工具目录（dsh_process 同款对策）
+            kwargs["env"] = build_subprocess_env()
 
         result = subprocess.run(cmd, **kwargs)
         if result.returncode != 0:
@@ -637,11 +638,6 @@ def execute_upgrade(
                 "text": True,
                 "encoding": "utf-8",
                 "errors": "replace",
-                # macOS GUI PATH 陷阱（v1.6.4 实机「点击升级没反应」根因）：
-                # Finder/LaunchAgent 启动的 App PATH 只有系统目录，npm/node
-                # 不可见，Popen 直接 FileNotFoundError。与 current_version /
-                # DshProcess 同款增强 PATH（补 Homebrew/nvm/volta 等目录）。
-                "env": build_subprocess_env(),
             }
             if cwd:
                 kwargs["cwd"] = cwd
@@ -651,6 +647,11 @@ def execute_upgrade(
                 kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
             else:
                 kwargs["start_new_session"] = True
+                # macOS GUI PATH 陷阱（v1.6.4 实机「点击升级没反应」根因）：
+                # Finder/LaunchAgent 启动的 App PATH 只有系统目录，npm/node
+                # 不可见，Popen 直接 FileNotFoundError。与 current_version /
+                # DshProcess 同款增强 PATH（补 Homebrew/nvm/volta 等目录）。
+                kwargs["env"] = build_subprocess_env()
 
             # 启动子进程
             proc = subprocess.Popen(argv, **kwargs)
